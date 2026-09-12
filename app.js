@@ -1,0 +1,254 @@
+const CHECKLIST_ITEMS = ["단어·한자 학습/복습", "문법·진도 학습", "청해 연습", "전날 내용 복습"];
+const STORAGE_KEY = "jlpt_daily_checklist";
+
+function todayStr(d = new Date()) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function loadChecklist() {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {};
+  } catch {
+    return {};
+  }
+}
+
+function saveChecklist(data) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  } catch {
+    /* localStorage unavailable (private mode etc.) — progress just won't persist */
+  }
+}
+
+function findWeek(dateStr, weeks) {
+  return weeks.find((w) => dateStr >= w.start && dateStr <= w.end) || null;
+}
+
+function daysUntil(dateStr) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const target = new Date(dateStr + "T00:00:00");
+  return Math.round((target - today) / 86400000);
+}
+
+function shuffle(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+// ---------- Tabs ----------
+function setupTabs() {
+  document.querySelectorAll(".tab-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".tab-btn").forEach((b) => b.classList.remove("active"));
+      document.querySelectorAll(".tab-panel").forEach((p) => p.classList.remove("active"));
+      btn.classList.add("active");
+      document.getElementById(`tab-${btn.dataset.tab}`).classList.add("active");
+    });
+  });
+}
+
+// ---------- Today tab ----------
+function renderToday(plan) {
+  const today = todayStr();
+  const ddayEl = document.getElementById("dday");
+  const diff = daysUntil(plan.examDate);
+  ddayEl.textContent = diff > 0 ? `시험까지 D-${diff}` : diff === 0 ? "오늘이 시험일입니다!" : "시험이 종료되었습니다";
+
+  const week = findWeek(today, plan.weeks);
+  const weekTitleEl = document.getElementById("week-title");
+  const weekFocusEl = document.getElementById("week-focus");
+  if (week) {
+    weekTitleEl.textContent = `Week ${week.week} (${week.start} ~ ${week.end})`;
+    weekFocusEl.textContent = week.focus;
+  } else if (today < plan.startDate) {
+    weekTitleEl.textContent = "학습 시작 전";
+    weekFocusEl.textContent = `${plan.startDate}부터 계획이 시작됩니다.`;
+  } else {
+    weekTitleEl.textContent = "계획 기간 종료";
+    weekFocusEl.textContent = "수고하셨습니다!";
+  }
+
+  renderChecklist(today);
+  renderStreak(plan);
+}
+
+function renderChecklist(today) {
+  const data = loadChecklist();
+  const todayState = data[today] || CHECKLIST_ITEMS.map(() => false);
+  const ul = document.getElementById("checklist");
+  ul.innerHTML = "";
+  CHECKLIST_ITEMS.forEach((label, i) => {
+    const li = document.createElement("li");
+    const id = `check-${i}`;
+    li.className = todayState[i] ? "done" : "";
+    li.innerHTML = `<input type="checkbox" id="${id}" ${todayState[i] ? "checked" : ""} /><label for="${id}">${label}</label>`;
+    li.querySelector("input").addEventListener("change", (e) => {
+      const d = loadChecklist();
+      const arr = d[today] || CHECKLIST_ITEMS.map(() => false);
+      arr[i] = e.target.checked;
+      d[today] = arr;
+      saveChecklist(d);
+      li.className = e.target.checked ? "done" : "";
+      renderStreakFromCache();
+    });
+    ul.appendChild(li);
+  });
+}
+
+let _planCache = null;
+function renderStreakFromCache() {
+  if (_planCache) renderStreak(_planCache);
+}
+
+function renderStreak(plan) {
+  _planCache = plan;
+  const data = loadChecklist();
+  const container = document.getElementById("streak");
+  container.innerHTML = "";
+  const today = new Date();
+  for (let i = 13; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(d.getDate() - i);
+    const key = todayStr(d);
+    const state = data[key];
+    const div = document.createElement("div");
+    let cls = "day";
+    if (state) {
+      const doneCount = state.filter(Boolean).length;
+      if (doneCount === CHECKLIST_ITEMS.length) cls += " done";
+      else if (doneCount > 0) cls += " partial";
+    }
+    if (i === 0) cls += " today";
+    div.className = cls;
+    div.title = key;
+    div.textContent = String(d.getDate());
+    container.appendChild(div);
+  }
+}
+
+// ---------- Plan tab ----------
+function renderPlanTable(plan) {
+  const tbody = document.querySelector("#plan-table tbody");
+  tbody.innerHTML = "";
+  plan.weeks.forEach((w) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${w.week}</td><td>${w.start}~${w.end}</td><td>${w.focus}</td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+// ---------- Quiz tab ----------
+const quiz = { type: null, pool: [], index: 0, score: 0, allVocab: [] };
+
+function setupQuiz() {
+  document.getElementById("start-vocab").addEventListener("click", () => startQuiz("vocab"));
+  document.getElementById("start-grammar").addEventListener("click", () => startQuiz("grammar"));
+  document.getElementById("quiz-next").addEventListener("click", nextQuestion);
+  document.getElementById("quiz-retry").addEventListener("click", () => {
+    document.getElementById("quiz-result").hidden = true;
+    document.getElementById("quiz-start").hidden = false;
+  });
+}
+
+async function startQuiz(type) {
+  const res = await fetch(`data/${type}.json`);
+  const items = await res.json();
+  quiz.type = type;
+  quiz.allVocab = items;
+  quiz.pool = shuffle(items).slice(0, Math.min(10, items.length));
+  quiz.index = 0;
+  quiz.score = 0;
+
+  document.getElementById("quiz-start").hidden = true;
+  document.getElementById("quiz-result").hidden = true;
+  document.getElementById("quiz-play").hidden = false;
+  renderQuestion();
+}
+
+function renderQuestion() {
+  const item = quiz.pool[quiz.index];
+  document.getElementById("quiz-progress").textContent = `${quiz.index + 1} / ${quiz.pool.length}`;
+  document.getElementById("quiz-note").hidden = true;
+  document.getElementById("quiz-next").hidden = true;
+
+  const promptEl = document.getElementById("quiz-prompt");
+  const hintEl = document.getElementById("quiz-hint");
+  let choices, answer;
+
+  if (quiz.type === "vocab") {
+    promptEl.textContent = `${item.word} (${item.reading})`;
+    hintEl.textContent = "뜻을 고르세요";
+    const distractors = shuffle(quiz.allVocab.filter((v) => v.meaning !== item.meaning))
+      .slice(0, 3)
+      .map((v) => v.meaning);
+    choices = shuffle([item.meaning, ...distractors]);
+    answer = item.meaning;
+  } else {
+    promptEl.textContent = item.sentence;
+    hintEl.textContent = item.meaning;
+    choices = shuffle(item.choices);
+    answer = item.answer;
+  }
+
+  const choicesEl = document.getElementById("quiz-choices");
+  choicesEl.innerHTML = "";
+  choices.forEach((choice) => {
+    const btn = document.createElement("button");
+    btn.className = "choice-btn";
+    btn.textContent = choice;
+    btn.addEventListener("click", () => selectAnswer(btn, choice, answer, item));
+    choicesEl.appendChild(btn);
+  });
+}
+
+function selectAnswer(btn, choice, answer, item) {
+  const buttons = document.querySelectorAll(".choice-btn");
+  buttons.forEach((b) => (b.disabled = true));
+  if (choice === answer) {
+    btn.classList.add("correct");
+    quiz.score++;
+  } else {
+    btn.classList.add("wrong");
+    buttons.forEach((b) => {
+      if (b.textContent === answer) b.classList.add("correct");
+    });
+  }
+  if (quiz.type === "grammar" && item.note) {
+    const noteEl = document.getElementById("quiz-note");
+    noteEl.textContent = item.note;
+    noteEl.hidden = false;
+  }
+  document.getElementById("quiz-next").hidden = false;
+}
+
+function nextQuestion() {
+  quiz.index++;
+  if (quiz.index >= quiz.pool.length) {
+    document.getElementById("quiz-play").hidden = true;
+    document.getElementById("quiz-result").hidden = false;
+    document.getElementById("quiz-score").textContent = `${quiz.score} / ${quiz.pool.length} 정답!`;
+  } else {
+    renderQuestion();
+  }
+}
+
+// ---------- Init ----------
+async function init() {
+  setupTabs();
+  setupQuiz();
+  const res = await fetch("data/plan.json");
+  const plan = await res.json();
+  renderToday(plan);
+  renderPlanTable(plan);
+}
+
+init();
