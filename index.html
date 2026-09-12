@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>JLPT N4 학습 트래커</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%93%9A%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <h1>JLPT N4 학습 트래커</h1>
+    <p id="dday" class="dday"></p>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab-btn active" data-tab="today">오늘 체크</button>
+    <button class="tab-btn" data-tab="quiz">쪽지시험</button>
+    <button class="tab-btn" data-tab="plan">전체 계획</button>
+  </nav>
+
+  <main>
+    <section id="tab-today" class="tab-panel active">
+      <div class="card" id="week-card">
+        <h2 id="week-title">이번 주</h2>
+        <p id="week-focus"></p>
+      </div>
+
+      <div class="card">
+        <h2>오늘 체크리스트</h2>
+        <ul id="checklist"></ul>
+      </div>
+
+      <div class="card">
+        <h2>최근 14일</h2>
+        <div id="streak" class="streak"></div>
+      </div>
+    </section>
+
+    <section id="tab-quiz" class="tab-panel">
+      <div class="card">
+        <h2>쪽지시험</h2>
+        <div id="quiz-start">
+          <p>10문제씩 무작위로 출제됩니다.</p>
+          <div class="quiz-buttons">
+            <button id="start-vocab" class="btn">단어 쪽지시험</button>
+            <button id="start-grammar" class="btn">문법 쪽지시험</button>
+          </div>
+        </div>
+        <div id="quiz-play" hidden>
+          <p id="quiz-progress"></p>
+          <p id="quiz-prompt" class="quiz-prompt"></p>
+          <p id="quiz-hint" class="quiz-hint"></p>
+          <div id="quiz-choices" class="quiz-choices"></div>
+          <p id="quiz-note" class="quiz-note" hidden></p>
+          <button id="quiz-next" class="btn" hidden>다음</button>
+        </div>
+        <div id="quiz-result" hidden>
+          <p id="quiz-score"></p>
+          <button id="quiz-retry" class="btn">다시 하기</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-plan" class="tab-panel">
+      <div class="card">
+        <h2>12주 전체 계획</h2>
+        <table id="plan-table">
+          <thead><tr><th>주차</th><th>기간</th><th>초점</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
