@@ -1,5 +1,6 @@
+const CURRENT_LEVEL = "n4"; // active JLPT level; see data/levels.json. Switch this (and eventually add a picker) once a new level's data/<level>/ folder exists.
 const CHECKLIST_ITEMS = ["단어·한자 학습/복습", "문법·진도 학습", "청해 연습", "전날 내용 복습"];
-const STORAGE_KEY = "jlpt_daily_checklist";
+const STORAGE_KEY = `jlpt_daily_checklist_${CURRENT_LEVEL}`;
 
 function todayStr(d = new Date()) {
   const y = d.getFullYear();
@@ -160,7 +161,7 @@ function setupQuiz() {
 }
 
 async function startQuiz(type) {
-  const res = await fetch(`data/${type}.json`);
+  const res = await fetch(`data/${CURRENT_LEVEL}/${type}.json`);
   const items = await res.json();
   quiz.type = type;
   quiz.allVocab = items;
@@ -245,7 +246,7 @@ function nextQuestion() {
 async function init() {
   setupTabs();
   setupQuiz();
-  const res = await fetch("data/plan.json");
+  const res = await fetch(`data/${CURRENT_LEVEL}/plan.json`);
   const plan = await res.json();
   renderToday(plan);
   renderPlanTable(plan);

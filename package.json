@@ -1,0 +1,12 @@
+{
+  "name": "jlpt-traning",
+  "private": true,
+  "description": "JLPT study tracker web app (static site, no build step)",
+  "scripts": {
+    "start": "python3 -m http.server 8000",
+    "test": "node test/smoke.js"
+  },
+  "devDependencies": {
+    "playwright": "^1.40.0"
+  }
+}
