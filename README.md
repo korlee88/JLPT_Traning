@@ -24,4 +24,13 @@ python3 -m http.server 8000
 
 ## 데이터 추가하기
 
-`data/vocab.json`, `data/grammar.json`에 항목을 추가하면 쪽지시험 문제가 늘어납니다. `data/plan.json`은 주차별 학습 계획 데이터입니다.
+레벨별로 `data/<level>/` 폴더에 `plan.json`(주차별 계획), `vocab.json`(단어 쪽지시험), `grammar.json`(문법 쪽지시험)을 둡니다. 현재는 `data/n4/`만 존재합니다. 새 레벨(N3 등) 추가 절차와 코드 컨벤션은 [CLAUDE.md](./CLAUDE.md)를 참고하세요.
+
+## 테스트
+
+```bash
+npm install
+npm test
+```
+
+`test/smoke.js`가 로컬 서버를 띄우고 헤드리스 브라우저로 오늘 체크/스트릭/전체 계획/쪽지시험 흐름과 날짜 경계 로직을 검증합니다. UI나 데이터를 바꾼 뒤에는 커밋 전에 실행하세요.

@@ -1,0 +1,48 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project goal
+
+A personal JLPT study tracker for the repo owner. Currently targeting **N4** (exam 2026-12-06). The plan is to keep extending this same project level by level — **N4 → N3 → N2 → N1** — over however long that takes. Treat every change as something that has to still make sense once a second and third level exist, not just as a one-off for N4.
+
+## Commands
+
+```bash
+npm install       # once, for the test toolchain (playwright)
+npm start         # serve locally: python3 -m http.server 8000
+npm test          # test/smoke.js — headless-browser regression check
+```
+
+There is no build step and no linter configured — it's intentionally a plain static site (`index.html` / `style.css` / `app.js`, no framework, no bundler). Don't introduce one without a concrete reason.
+
+Deploy is automatic: push to `main` → `.github/workflows/deploy-pages.yml` → GitHub Pages at `https://<owner>.github.io/JLPT_Traning/`. There is no CI beyond that workflow, so `npm test` is the only thing standing between a bad commit and production — run it before every push that touches `app.js`, `index.html`, `style.css`, or any `data/**/*.json`.
+
+## Architecture
+
+- **One active level at a time.** `CURRENT_LEVEL` in `app.js` picks which `data/<level>/` folder the app reads. `data/levels.json` is a registry of levels that exist, but the app doesn't read it yet — there's no level switcher UI. Don't build one until a second level actually has data; until then it's dead code.
+- **All state is client-side.** `localStorage` only, keyed per level (`jlpt_daily_checklist_<level>`), no backend, no accounts. This is a single-user personal tool — don't add a server or auth for it.
+- **Two views of the same schedule, kept in sync by hand.** `STUDY_PLAN.md` (human-readable) and `data/<level>/plan.json` (what the app renders) describe the same weekly breakdown. There is no generator linking them — if you change one, update the other, or they will silently drift.
+- **Dates come from the real clock, always.** `todayStr()` formats `Date` using local `getFullYear/getMonth/getDate`, never `toISOString()`. `toISOString()` converts to UTC, which shifts the calendar date during early-morning hours in KST and would make the app show the wrong week/D-day for part of the day. `test/smoke.js` mocks `Date` (see `withFixedDate`) to check week/D-day logic at plan boundaries (before start, week 1, exam day, after exam) — extend those cases if you touch that logic.
+- **GitHub Pages deploy gotcha (already hit once):** the first deploy failed with `Branch "main" is not allowed to deploy to github-pages due to environment protection rules`. Fix is in the repo owner's GitHub Settings, not in code: Settings → Environments → `github-pages` → Deployment branches and tags → set to "No restriction". Claude's GitHub App token also cannot call the Actions API to trigger or re-run a workflow (`403 Resource not accessible by integration`) — recovering a failed Pages deploy needs a human to click "Re-run jobs" or push a new commit.
+
+## Adding a new level (N3, then N2, then N1)
+
+1. Create `data/<level>/` with `plan.json`, `vocab.json`, `grammar.json` matching the schemas below.
+2. Add an entry to `data/levels.json`.
+3. Write the human-readable plan (a new `STUDY_PLAN_<LEVEL>.md`, or extend `STUDY_PLAN.md`) — whichever the repo owner prefers at the time; ask if it's not obvious from how N4's was used.
+4. When that level becomes the one actively being studied, switch `CURRENT_LEVEL` in `app.js`. Old levels' checklist history stays intact under its own storage key.
+5. `npm test` before pushing.
+
+**Schemas** (see `data/n4/*.json` for real examples):
+
+```
+plan.json     { startDate, examDate, textbook, weeks: [{ week, start, end, focus }] }
+vocab.json    [{ word, reading, meaning }]
+grammar.json  [{ sentence, meaning, choices: [4 strings], answer, note }]
+```
+
+## Content accuracy and copyright
+
+- Vocab/grammar entries must be standard, verifiable JLPT-level content — don't invent a word/reading/meaning or a grammar pattern that isn't real.
+- Never transcribe the textbook's own exercises, example sentences, or passages into `data/`. Write original example sentences for the same grammar point instead — reference the pattern/level, not the book's text.
