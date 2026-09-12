@@ -37,10 +37,18 @@ Deploy is automatic: push to `main` → `.github/workflows/deploy-pages.yml` →
 **Schemas** (see `data/n4/*.json` for real examples):
 
 ```
-plan.json     { startDate, examDate, textbook, weeks: [{ week, start, end, focus }] }
-vocab.json    [{ word, reading, meaning }]
-grammar.json  [{ sentence, meaning, choices: [4 strings], answer, note }]
+plan.json       { startDate, examDate, textbook, weeks: [{ week, start, end, focus }] }
+vocab.json      [{ word, reading, meaning }]           quiz asks for meaning
+kanji.json      [{ word, reading, meaning }]            same shape, quiz asks for reading instead
+grammar.json    [{ sentence, meaning, choices: [4 strings], answer, note }]
+reading.json    [{ passage, question, choices: [4 strings], answer }]
+listening.json  [{ script, meaning }]                   quiz speaks `script` via Web Speech API,
+                                                          distractors drawn from other entries' meanings
 ```
+
+`vocab`/`kanji`/`listening` all use the shared `pickDistractors()` helper in `app.js` to build the 3 wrong choices from other entries in the same file, rather than hand-authoring distractors — keep new entries in those files reasonably distinct in meaning/reading so auto-picked distractors stay plausible-but-wrong, not nonsensical.
+
+**Listening quiz depends on the browser's Web Speech API** (`speechSynthesis`, `lang: "ja-JP"`) — there are no audio files. This means quality depends on whatever Japanese TTS voice the visitor's browser/OS provides (works well on Chrome desktop; may be silent or absent elsewhere). It degrades gracefully either way: the transcript is always revealed in the note after answering, so the quiz stays usable without audio.
 
 ## Content accuracy and copyright
 

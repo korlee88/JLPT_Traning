@@ -97,25 +97,60 @@ async function main() {
       const rowCount = await page.$$eval("#plan-table tbody tr", (rows) => rows.length);
       assert(rowCount === plan.weeks.length, `plan table shows all ${plan.weeks.length} weeks (got ${rowCount})`);
 
-      await page.click('.tab-btn[data-tab="quiz"]');
-      await page.click("#start-vocab");
-      await page.waitForSelector("#quiz-choices .choice-btn");
-      for (let i = 0; i < 10; i++) {
+      // Runs one full 10-question round for `startButtonId`, calling `onFirstQuestion`
+      // (if given) after the first question renders but before answering it, and
+      // `onFirstAnswer` right after that first answer is submitted. Ends back at the
+      // quiz start screen via "다시 하기".
+      async function runQuizRound(startButtonId, onFirstQuestion, onFirstAnswer) {
+        await page.click(startButtonId);
         await page.waitForSelector("#quiz-choices .choice-btn");
-        await page.locator("#quiz-choices .choice-btn").first().click();
-        await page.click("#quiz-next");
+        const progress = await page.textContent("#quiz-progress");
+        const total = Number(progress.split("/")[1].trim());
+        for (let i = 0; i < total; i++) {
+          await page.waitForSelector("#quiz-choices .choice-btn");
+          if (i === 0 && onFirstQuestion) await onFirstQuestion();
+          await page.locator("#quiz-choices .choice-btn").first().click();
+          if (i === 0 && onFirstAnswer) await onFirstAnswer();
+          await page.click("#quiz-next");
+        }
+        await page.waitForSelector("#quiz-result:not([hidden])");
+        const scoreText = await page.textContent("#quiz-score");
+        assert(new RegExp(`\\d+ / ${total}`).test(scoreText), `${startButtonId} quiz reaches a score screen (got "${scoreText}")`);
+        await page.click("#quiz-retry");
+        assert(await page.isVisible("#quiz-start"), `${startButtonId}: retry returns to quiz start screen`);
       }
-      await page.waitForSelector("#quiz-result:not([hidden])");
-      const scoreText = await page.textContent("#quiz-score");
-      assert(/\d+ \/ 10/.test(scoreText), `vocab quiz reaches a score screen (got "${scoreText}")`);
-      await page.click("#quiz-retry");
-      assert(await page.isVisible("#quiz-start"), "retry returns to quiz start screen");
 
-      await page.click("#start-grammar");
-      await page.waitForSelector("#quiz-choices .choice-btn");
-      await page.locator("#quiz-choices .choice-btn").first().click();
-      const noteVisible = await page.isVisible("#quiz-note");
-      assert(noteVisible, "grammar quiz shows an explanation note after answering");
+      await page.click('.tab-btn[data-tab="quiz"]');
+
+      await runQuizRound("#start-vocab", async () => {
+        assert(!(await page.isVisible("#quiz-replay")), "replay button stays hidden outside listening mode (vocab)");
+      });
+
+      await runQuizRound("#start-grammar", null, async () => {
+        assert(await page.isVisible("#quiz-note"), "grammar quiz shows an explanation note after answering");
+      });
+
+      await runQuizRound("#start-kanji", async () => {
+        const kanjiHint = await page.textContent("#quiz-hint");
+        assert(kanjiHint.includes("읽는 법"), `kanji quiz asks for reading (got "${kanjiHint}")`);
+      });
+
+      await runQuizRound("#start-reading", async () => {
+        const promptClass = await page.getAttribute("#quiz-prompt", "class");
+        assert(promptClass.includes("passage"), "reading quiz renders the passage in passage style");
+        assert(!(await page.isVisible("#quiz-replay")), "replay button stays hidden outside listening mode (reading)");
+      });
+
+      await runQuizRound(
+        "#start-listening",
+        async () => {
+          assert(await page.isVisible("#quiz-replay"), "listening quiz shows a replay button");
+        },
+        async () => {
+          const listeningNote = await page.textContent("#quiz-note");
+          assert(listeningNote.startsWith("스크립트:"), `listening quiz reveals the script after answering (got "${listeningNote}")`);
+        }
+      );
 
       assert(consoleErrors.length === 0, `no console errors (got ${JSON.stringify(consoleErrors)})`);
       await page.close();

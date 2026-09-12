@@ -123,10 +123,12 @@ main {
   font-size: 0.95rem;
   cursor: pointer;
 }
-.quiz-buttons { display: flex; gap: 10px; }
-.quiz-buttons .btn { flex: 1; }
+.quiz-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 
-.quiz-prompt { font-size: 1.3rem; font-weight: 600; margin: 16px 0 4px; }
+.quiz-prompt { font-size: 1.3rem; font-weight: 600; margin: 16px 0 4px; white-space: pre-wrap; }
+.quiz-prompt.passage { font-size: 1rem; font-weight: 400; line-height: 1.6; text-align: left; }
+.quiz-replay { margin: 4px 0 12px; }
+.quiz-replay:not([hidden]) { display: block; }
 .quiz-hint { color: var(--muted); margin: 0 0 12px; }
 .quiz-choices { display: grid; gap: 8px; }
 .choice-btn {

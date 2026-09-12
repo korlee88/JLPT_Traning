@@ -148,23 +148,44 @@ function renderPlanTable(plan) {
 }
 
 // ---------- Quiz tab ----------
-const quiz = { type: null, pool: [], index: 0, score: 0, allVocab: [] };
+const quiz = { type: null, pool: [], index: 0, score: 0, allItems: [] };
 
 function setupQuiz() {
   document.getElementById("start-vocab").addEventListener("click", () => startQuiz("vocab"));
+  document.getElementById("start-kanji").addEventListener("click", () => startQuiz("kanji"));
   document.getElementById("start-grammar").addEventListener("click", () => startQuiz("grammar"));
+  document.getElementById("start-reading").addEventListener("click", () => startQuiz("reading"));
+  document.getElementById("start-listening").addEventListener("click", () => startQuiz("listening"));
   document.getElementById("quiz-next").addEventListener("click", nextQuestion);
+  document.getElementById("quiz-replay").addEventListener("click", () => {
+    const item = quiz.pool[quiz.index];
+    if (item && item.script) speak(item.script);
+  });
   document.getElementById("quiz-retry").addEventListener("click", () => {
     document.getElementById("quiz-result").hidden = true;
     document.getElementById("quiz-start").hidden = false;
   });
 }
 
+function speak(text) {
+  if (!("speechSynthesis" in window)) return;
+  window.speechSynthesis.cancel();
+  const utter = new SpeechSynthesisUtterance(text);
+  utter.lang = "ja-JP";
+  window.speechSynthesis.speak(utter);
+}
+
+function pickDistractors(items, correctValue, field) {
+  return shuffle(items.filter((v) => v[field] !== correctValue))
+    .slice(0, 3)
+    .map((v) => v[field]);
+}
+
 async function startQuiz(type) {
   const res = await fetch(`data/${CURRENT_LEVEL}/${type}.json`);
   const items = await res.json();
   quiz.type = type;
-  quiz.allVocab = items;
+  quiz.allItems = items;
   quiz.pool = shuffle(items).slice(0, Math.min(10, items.length));
   quiz.index = 0;
   quiz.score = 0;
@@ -183,21 +204,40 @@ function renderQuestion() {
 
   const promptEl = document.getElementById("quiz-prompt");
   const hintEl = document.getElementById("quiz-hint");
+  const replayBtn = document.getElementById("quiz-replay");
+  promptEl.classList.remove("passage");
+  replayBtn.hidden = true;
   let choices, answer;
 
   if (quiz.type === "vocab") {
     promptEl.textContent = `${item.word} (${item.reading})`;
     hintEl.textContent = "뜻을 고르세요";
-    const distractors = shuffle(quiz.allVocab.filter((v) => v.meaning !== item.meaning))
-      .slice(0, 3)
-      .map((v) => v.meaning);
-    choices = shuffle([item.meaning, ...distractors]);
+    choices = shuffle([item.meaning, ...pickDistractors(quiz.allItems, item.meaning, "meaning")]);
     answer = item.meaning;
-  } else {
+  } else if (quiz.type === "kanji") {
+    promptEl.textContent = item.word;
+    hintEl.textContent = `읽는 법을 고르세요 (뜻: ${item.meaning})`;
+    choices = shuffle([item.reading, ...pickDistractors(quiz.allItems, item.reading, "reading")]);
+    answer = item.reading;
+  } else if (quiz.type === "grammar") {
     promptEl.textContent = item.sentence;
     hintEl.textContent = item.meaning;
     choices = shuffle(item.choices);
     answer = item.answer;
+  } else if (quiz.type === "reading") {
+    promptEl.classList.add("passage");
+    promptEl.textContent = item.passage;
+    hintEl.textContent = item.question;
+    choices = shuffle(item.choices);
+    answer = item.answer;
+  } else {
+    // listening
+    promptEl.textContent = "🔊 음성을 듣고 뜻을 고르세요";
+    hintEl.textContent = "";
+    replayBtn.hidden = false;
+    choices = shuffle([item.meaning, ...pickDistractors(quiz.allItems, item.meaning, "meaning")]);
+    answer = item.meaning;
+    speak(item.script);
   }
 
   const choicesEl = document.getElementById("quiz-choices");
@@ -223,9 +263,12 @@ function selectAnswer(btn, choice, answer, item) {
       if (b.textContent === answer) b.classList.add("correct");
     });
   }
+  const noteEl = document.getElementById("quiz-note");
   if (quiz.type === "grammar" && item.note) {
-    const noteEl = document.getElementById("quiz-note");
     noteEl.textContent = item.note;
+    noteEl.hidden = false;
+  } else if (quiz.type === "listening") {
+    noteEl.textContent = `스크립트: ${item.script}`;
     noteEl.hidden = false;
   }
   document.getElementById("quiz-next").hidden = false;
