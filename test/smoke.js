@@ -144,7 +144,7 @@ async function main() {
       assert(!(await checklistChecked(0)), "checklist item 0 starts unchecked before any word/kana/kanji quiz today");
       await runQuizRound("#start-hiragana", async () => {
         const hint = await page.textContent("#quiz-hint");
-        assert(hint.includes("로마자"), `hiragana quiz asks for romaji (got "${hint}")`);
+        assert(hint.includes("한글"), `hiragana quiz asks for hangul reading (got "${hint}")`);
       });
       assert(await checklistChecked(0), "completing the hiragana quiz auto-checks checklist item 0 (단어·한자 학습/복습)");
 
