@@ -19,6 +19,12 @@ function launchOpts() {
   return opts;
 }
 
+function addDaysToDateStr(dateStr, days) {
+  const d = new Date(dateStr + "T12:00:00Z"); // noon UTC anchor avoids DST/timezone edge issues
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
 function assert(cond, message) {
   if (!cond) throw new Error("FAIL: " + message);
   console.log("  ok - " + message);
@@ -100,7 +106,8 @@ async function main() {
       // Runs one full 10-question round for `startButtonId`, calling `onFirstQuestion`
       // (if given) after the first question renders but before answering it, and
       // `onFirstAnswer` right after that first answer is submitted. Ends back at the
-      // quiz start screen via "다시 하기".
+      // quiz list screen via "쪽지시험 목록으로", and checks that button now shows
+      // today's completion badge.
       async function runQuizRound(startButtonId, onFirstQuestion, onFirstAnswer) {
         await page.click(startButtonId);
         await page.waitForSelector("#quiz-choices .choice-btn");
@@ -117,7 +124,12 @@ async function main() {
         const scoreText = await page.textContent("#quiz-score");
         assert(new RegExp(`\\d+ / ${total}`).test(scoreText), `${startButtonId} quiz reaches a score screen (got "${scoreText}")`);
         await page.click("#quiz-retry");
-        assert(await page.isVisible("#quiz-start"), `${startButtonId}: retry returns to quiz start screen`);
+        assert(await page.isVisible("#quiz-start"), `${startButtonId}: retry returns to quiz list screen`);
+
+        const btnText = await page.textContent(startButtonId);
+        const btnClass = await page.getAttribute(startButtonId, "class");
+        assert(btnText.startsWith("✓") && new RegExp(`\\(\\d+/${total}\\)`).test(btnText), `${startButtonId}: shows today's completion badge (got "${btnText}")`);
+        assert(btnClass.includes("done-today"), `${startButtonId}: marked done-today`);
       }
 
       await page.click('.tab-btn[data-tab="quiz"]');
@@ -151,6 +163,13 @@ async function main() {
           assert(listeningNote.startsWith("스크립트:"), `listening quiz reveals the script after answering (got "${listeningNote}")`);
         }
       );
+
+      const nextDay = addDaysToDateStr(plan.weeks[2].start, 1);
+      await withFixedDate(page, nextDay);
+      await page.reload({ waitUntil: "networkidle" });
+      await page.click('.tab-btn[data-tab="quiz"]');
+      const vocabBtnTextNextDay = await page.textContent("#start-vocab");
+      assert(!vocabBtnTextNextDay.startsWith("✓"), `completion badge resets on a new day (got "${vocabBtnTextNextDay}")`);
 
       assert(consoleErrors.length === 0, `no console errors (got ${JSON.stringify(consoleErrors)})`);
       await page.close();

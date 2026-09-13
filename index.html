@@ -43,11 +43,11 @@
         <div id="quiz-start">
           <p>10문제씩 무작위로 출제됩니다.</p>
           <div class="quiz-buttons">
-            <button id="start-vocab" class="btn">단어 쪽지시험</button>
-            <button id="start-kanji" class="btn">한자 쪽지시험</button>
-            <button id="start-grammar" class="btn">문법 쪽지시험</button>
-            <button id="start-reading" class="btn">독해 쪽지시험</button>
-            <button id="start-listening" class="btn">청해 쪽지시험</button>
+            <button id="start-vocab" class="btn quiz-type-btn" data-type="vocab">단어 쪽지시험</button>
+            <button id="start-kanji" class="btn quiz-type-btn" data-type="kanji">한자 쪽지시험</button>
+            <button id="start-grammar" class="btn quiz-type-btn" data-type="grammar">문법 쪽지시험</button>
+            <button id="start-reading" class="btn quiz-type-btn" data-type="reading">독해 쪽지시험</button>
+            <button id="start-listening" class="btn quiz-type-btn" data-type="listening">청해 쪽지시험</button>
           </div>
         </div>
         <div id="quiz-play" hidden>
@@ -61,7 +61,7 @@
         </div>
         <div id="quiz-result" hidden>
           <p id="quiz-score"></p>
-          <button id="quiz-retry" class="btn">다시 하기</button>
+          <button id="quiz-retry" class="btn">쪽지시험 목록으로</button>
         </div>
       </div>
     </section>
