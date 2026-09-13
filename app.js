@@ -296,9 +296,9 @@ function renderQuestion() {
 
   if (quiz.type === "hiragana" || quiz.type === "katakana") {
     promptEl.textContent = item.char;
-    hintEl.textContent = "읽는 법(로마자)을 고르세요";
-    choices = shuffle([item.romaji, ...pickDistractors(quiz.allItems, item.romaji, "romaji")]);
-    answer = item.romaji;
+    hintEl.textContent = "읽는 법(한글)을 고르세요";
+    choices = shuffle([item.hangul, ...pickDistractors(quiz.allItems, item.hangul, "hangul")]);
+    answer = item.hangul;
   } else if (quiz.type === "vocab") {
     promptEl.textContent = `${item.word} (${item.reading})`;
     hintEl.textContent = "뜻을 고르세요";

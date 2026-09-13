@@ -1,12 +1,12 @@
 [
-  { "char": "ア", "romaji": "a" }, { "char": "イ", "romaji": "i" }, { "char": "ウ", "romaji": "u" }, { "char": "エ", "romaji": "e" }, { "char": "オ", "romaji": "o" },
-  { "char": "カ", "romaji": "ka" }, { "char": "キ", "romaji": "ki" }, { "char": "ク", "romaji": "ku" }, { "char": "ケ", "romaji": "ke" }, { "char": "コ", "romaji": "ko" },
-  { "char": "サ", "romaji": "sa" }, { "char": "シ", "romaji": "shi" }, { "char": "ス", "romaji": "su" }, { "char": "セ", "romaji": "se" }, { "char": "ソ", "romaji": "so" },
-  { "char": "タ", "romaji": "ta" }, { "char": "チ", "romaji": "chi" }, { "char": "ツ", "romaji": "tsu" }, { "char": "テ", "romaji": "te" }, { "char": "ト", "romaji": "to" },
-  { "char": "ナ", "romaji": "na" }, { "char": "ニ", "romaji": "ni" }, { "char": "ヌ", "romaji": "nu" }, { "char": "ネ", "romaji": "ne" }, { "char": "ノ", "romaji": "no" },
-  { "char": "ハ", "romaji": "ha" }, { "char": "ヒ", "romaji": "hi" }, { "char": "フ", "romaji": "fu" }, { "char": "ヘ", "romaji": "he" }, { "char": "ホ", "romaji": "ho" },
-  { "char": "マ", "romaji": "ma" }, { "char": "ミ", "romaji": "mi" }, { "char": "ム", "romaji": "mu" }, { "char": "メ", "romaji": "me" }, { "char": "モ", "romaji": "mo" },
-  { "char": "ヤ", "romaji": "ya" }, { "char": "ユ", "romaji": "yu" }, { "char": "ヨ", "romaji": "yo" },
-  { "char": "ラ", "romaji": "ra" }, { "char": "リ", "romaji": "ri" }, { "char": "ル", "romaji": "ru" }, { "char": "レ", "romaji": "re" }, { "char": "ロ", "romaji": "ro" },
-  { "char": "ワ", "romaji": "wa" }, { "char": "ヲ", "romaji": "wo" }, { "char": "ン", "romaji": "n" }
+  { "char": "ア", "hangul": "아" }, { "char": "イ", "hangul": "이" }, { "char": "ウ", "hangul": "우" }, { "char": "エ", "hangul": "에" }, { "char": "オ", "hangul": "오" },
+  { "char": "カ", "hangul": "가" }, { "char": "キ", "hangul": "기" }, { "char": "ク", "hangul": "구" }, { "char": "ケ", "hangul": "게" }, { "char": "コ", "hangul": "고" },
+  { "char": "サ", "hangul": "사" }, { "char": "シ", "hangul": "시" }, { "char": "ス", "hangul": "스" }, { "char": "セ", "hangul": "세" }, { "char": "ソ", "hangul": "소" },
+  { "char": "タ", "hangul": "다" }, { "char": "チ", "hangul": "지" }, { "char": "ツ", "hangul": "쓰" }, { "char": "テ", "hangul": "데" }, { "char": "ト", "hangul": "도" },
+  { "char": "ナ", "hangul": "나" }, { "char": "ニ", "hangul": "니" }, { "char": "ヌ", "hangul": "누" }, { "char": "ネ", "hangul": "네" }, { "char": "ノ", "hangul": "노" },
+  { "char": "ハ", "hangul": "하" }, { "char": "ヒ", "hangul": "히" }, { "char": "フ", "hangul": "후" }, { "char": "ヘ", "hangul": "헤" }, { "char": "ホ", "hangul": "호" },
+  { "char": "マ", "hangul": "마" }, { "char": "ミ", "hangul": "미" }, { "char": "ム", "hangul": "무" }, { "char": "メ", "hangul": "메" }, { "char": "モ", "hangul": "모" },
+  { "char": "ヤ", "hangul": "야" }, { "char": "ユ", "hangul": "유" }, { "char": "ヨ", "hangul": "요" },
+  { "char": "ラ", "hangul": "라" }, { "char": "リ", "hangul": "리" }, { "char": "ル", "hangul": "루" }, { "char": "レ", "hangul": "레" }, { "char": "ロ", "hangul": "로" },
+  { "char": "ワ", "hangul": "와" }, { "char": "ヲ", "hangul": "오" }, { "char": "ン", "hangul": "응" }
 ]
