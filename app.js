@@ -341,6 +341,28 @@ function renderQuestion() {
   });
 }
 
+// Recap shown after every answer (right or wrong), so wrong picks always come
+// with the correct word/reading/meaning, not just a red highlight.
+function explanationFor(type, item) {
+  switch (type) {
+    case "hiragana":
+    case "katakana":
+      return `${item.char} = ${item.hangul}`;
+    case "vocab":
+      return `${item.word} (${item.reading}) = ${item.meaning}`;
+    case "kanji":
+      return `${item.word} → ${item.reading} (${item.meaning})`;
+    case "grammar":
+      return item.note || null;
+    case "reading":
+      return item.note || null;
+    case "listening":
+      return `스크립트: ${item.script}\n뜻: ${item.meaning}`;
+    default:
+      return null;
+  }
+}
+
 function selectAnswer(btn, choice, answer, item) {
   const buttons = document.querySelectorAll(".choice-btn");
   buttons.forEach((b) => (b.disabled = true));
@@ -354,11 +376,9 @@ function selectAnswer(btn, choice, answer, item) {
     });
   }
   const noteEl = document.getElementById("quiz-note");
-  if (quiz.type === "grammar" && item.note) {
-    noteEl.textContent = item.note;
-    noteEl.hidden = false;
-  } else if (quiz.type === "listening") {
-    noteEl.textContent = `스크립트: ${item.script}`;
+  const note = explanationFor(quiz.type, item);
+  if (note) {
+    noteEl.textContent = note;
     noteEl.hidden = false;
   }
   document.getElementById("quiz-next").hidden = false;

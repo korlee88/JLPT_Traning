@@ -43,10 +43,12 @@ katakana.json   [{ char, hangul }]                      same shape as hiragana.j
 vocab.json      [{ word, reading, meaning }]           quiz asks for meaning
 kanji.json      [{ word, reading, meaning }]            same shape, quiz asks for reading instead
 grammar.json    [{ sentence, meaning, choices: [4 strings], answer, note }]
-reading.json    [{ passage, question, choices: [4 strings], answer }]
+reading.json    [{ passage, question, choices: [4 strings], answer, note }]
 listening.json  [{ script, meaning }]                   quiz speaks `script` via Web Speech API,
                                                           distractors drawn from other entries' meanings
 ```
+
+**Every quiz type shows an explanation after answering** (right or wrong), via `explanationFor()` in `app.js` — not just a red/green highlight. For `grammar`/`reading` this is the data's own `note` field (write one for every new entry: point at the specific sentence/clause that gives the answer, not just restate it). The other types don't need authored notes; `explanationFor()` builds the recap straight from the entry's own fields (e.g. `word (reading) = meaning`).
 
 `hiragana`/`katakana` cover only the base 46-character gojuon table each (no dakuten/handakuten or combination sounds yet) — extend them the same way if that's ever wanted. `hangul` uses the **word-initial** form from 국립국어원's 외래어 표기법 (e.g. か→가, つ→쓰, て→데), consistently, even though real words shift か/た/て/と etc. to the aspirated 어중 form (카/타/테/토) mid-word — that distinction is out of scope for a single-character reading quiz and would need actual word context to teach correctly. ん is shown as 응, a teaching convention for the isolated mora — the official rule (always ㄴ batchim) only applies to ん attached to a word.
 
