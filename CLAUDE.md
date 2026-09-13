@@ -38,6 +38,8 @@ Deploy is automatic: push to `main` → `.github/workflows/deploy-pages.yml` →
 
 ```
 plan.json       { startDate, examDate, textbook, weeks: [{ week, start, end, focus }] }
+hiragana.json   [{ char, romaji }]                      quiz asks for the romaji reading
+katakana.json   [{ char, romaji }]                      same shape as hiragana.json
 vocab.json      [{ word, reading, meaning }]           quiz asks for meaning
 kanji.json      [{ word, reading, meaning }]            same shape, quiz asks for reading instead
 grammar.json    [{ sentence, meaning, choices: [4 strings], answer, note }]
@@ -46,7 +48,11 @@ listening.json  [{ script, meaning }]                   quiz speaks `script` via
                                                           distractors drawn from other entries' meanings
 ```
 
+`hiragana`/`katakana` cover only the base 46-character gojuon table each (no dakuten/handakuten or combination sounds yet) — extend them the same way if that's ever wanted.
+
 `vocab`/`kanji`/`listening` all use the shared `pickDistractors()` helper in `app.js` to build the 3 wrong choices from other entries in the same file, rather than hand-authoring distractors — keep new entries in those files reasonably distinct in meaning/reading so auto-picked distractors stay plausible-but-wrong, not nonsensical.
+
+**Finishing a quiz can auto-check the daily checklist.** `CHECKLIST_AUTO_MAP` in `app.js` maps each quiz type to a `CHECKLIST_ITEMS` index; completing a mapped quiz ticks that box for today if it isn't already (never unticks). `전날 내용 복습` (index 3) has no quiz proxy and stays manual-only — don't force a mapping onto it just to make everything automatic. If a new quiz type is added, decide whether it belongs in this map too.
 
 **Listening quiz depends on the browser's Web Speech API** (`speechSynthesis`, `lang: "ja-JP"`) — there are no audio files. This means quality depends on whatever Japanese TTS voice the visitor's browser/OS provides (works well on Chrome desktop; may be silent or absent elsewhere). It degrades gracefully either way: the transcript is always revealed in the note after answering, so the quiz stays usable without audio.
 

@@ -3,12 +3,21 @@ const CHECKLIST_ITEMS = ["단어·한자 학습/복습", "문법·진도 학습"
 const STORAGE_KEY = `jlpt_daily_checklist_${CURRENT_LEVEL}`;
 const QUIZ_RESULTS_KEY = `jlpt_quiz_results_${CURRENT_LEVEL}`;
 const QUIZ_TYPE_LABELS = {
+  hiragana: "히라가나 쪽지시험",
+  katakana: "가타카나 쪽지시험",
   vocab: "단어 쪽지시험",
   kanji: "한자 쪽지시험",
   grammar: "문법 쪽지시험",
   reading: "독해 쪽지시험",
   listening: "청해 쪽지시험",
 };
+// Which CHECKLIST_ITEMS index each quiz type's completion auto-checks (see
+// autoCheckFromQuiz). Index 3 ("전날 내용 복습") has no quiz proxy and stays manual.
+const CHECKLIST_AUTO_MAP = [
+  { index: 0, quizTypes: ["hiragana", "katakana", "vocab", "kanji"] },
+  { index: 1, quizTypes: ["grammar", "reading"] },
+  { index: 2, quizTypes: ["listening"] },
+];
 
 function todayStr(d = new Date()) {
   const y = d.getFullYear();
@@ -159,6 +168,8 @@ function renderPlanTable(plan) {
 const quiz = { type: null, pool: [], index: 0, score: 0, allItems: [] };
 
 function setupQuiz() {
+  document.getElementById("start-hiragana").addEventListener("click", () => startQuiz("hiragana"));
+  document.getElementById("start-katakana").addEventListener("click", () => startQuiz("katakana"));
   document.getElementById("start-vocab").addEventListener("click", () => startQuiz("vocab"));
   document.getElementById("start-kanji").addEventListener("click", () => startQuiz("kanji"));
   document.getElementById("start-grammar").addEventListener("click", () => startQuiz("grammar"));
@@ -207,6 +218,28 @@ function recordQuizResult(type, score, total) {
   data[today] = data[today] || {};
   data[today][type] = { score, total };
   saveQuizResults(data);
+}
+
+// Ticks any 오늘 체크리스트 item mapped (via CHECKLIST_AUTO_MAP) to this quiz
+// type, so finishing a quiz counts as having done that checklist item today.
+// Never unchecks anything — only fills in items still unchecked.
+function autoCheckFromQuiz(type) {
+  const today = todayStr();
+  const data = loadChecklist();
+  const arr = data[today] || CHECKLIST_ITEMS.map(() => false);
+  let changed = false;
+  CHECKLIST_AUTO_MAP.forEach(({ index, quizTypes }) => {
+    if (quizTypes.includes(type) && !arr[index]) {
+      arr[index] = true;
+      changed = true;
+    }
+  });
+  if (changed) {
+    data[today] = arr;
+    saveChecklist(data);
+    renderChecklist(today);
+    renderStreakFromCache();
+  }
 }
 
 // Marks each quiz-type button with today's result (✓ + score), if it's been
@@ -261,7 +294,12 @@ function renderQuestion() {
   replayBtn.hidden = true;
   let choices, answer;
 
-  if (quiz.type === "vocab") {
+  if (quiz.type === "hiragana" || quiz.type === "katakana") {
+    promptEl.textContent = item.char;
+    hintEl.textContent = "읽는 법(로마자)을 고르세요";
+    choices = shuffle([item.romaji, ...pickDistractors(quiz.allItems, item.romaji, "romaji")]);
+    answer = item.romaji;
+  } else if (quiz.type === "vocab") {
     promptEl.textContent = `${item.word} (${item.reading})`;
     hintEl.textContent = "뜻을 고르세요";
     choices = shuffle([item.meaning, ...pickDistractors(quiz.allItems, item.meaning, "meaning")]);
@@ -333,6 +371,7 @@ function nextQuestion() {
     document.getElementById("quiz-result").hidden = false;
     document.getElementById("quiz-score").textContent = `${quiz.score} / ${quiz.pool.length} 정답!`;
     recordQuizResult(quiz.type, quiz.score, quiz.pool.length);
+    autoCheckFromQuiz(quiz.type);
   } else {
     renderQuestion();
   }
