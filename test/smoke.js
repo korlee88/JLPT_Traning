@@ -222,6 +222,38 @@ async function main() {
       await page.close();
     }
 
+    // --- Wrong-answer review queue: a missed item should resurface next round ---
+    {
+      const page = await browser.newPage();
+      await withFixedDate(page, plan.weeks[2].start);
+      await page.goto(URL, { waitUntil: "networkidle" });
+      await page.click('.tab-btn[data-tab="quiz"]');
+      await page.click("#start-vocab");
+      await page.waitForSelector("#quiz-choices .choice-btn");
+
+      let missedPrompt = null;
+      for (let i = 0; i < 10; i++) {
+        await page.waitForSelector("#quiz-choices .choice-btn");
+        const prompt = await page.textContent("#quiz-prompt");
+        await page.locator("#quiz-choices .choice-btn").first().click();
+        if (!missedPrompt && (await page.locator(".choice-btn.wrong").count()) > 0) missedPrompt = prompt;
+        await page.click("#quiz-next");
+      }
+      assert(missedPrompt, "at least one vocab question was answered wrong in this round (expected virtually always with random clicks)");
+
+      await page.click("#quiz-retry");
+      await page.click("#start-vocab");
+      let reappeared = false;
+      for (let i = 0; i < 10; i++) {
+        await page.waitForSelector("#quiz-choices .choice-btn");
+        if ((await page.textContent("#quiz-prompt")) === missedPrompt) reappeared = true;
+        await page.locator("#quiz-choices .choice-btn").first().click();
+        await page.click("#quiz-next");
+      }
+      assert(reappeared, `missed item "${missedPrompt}" was prioritized back into the next vocab round`);
+      await page.close();
+    }
+
     // --- Date-boundary logic ---
     const cases = [
       { date: "2000-01-01", expect: (t, d) => t.includes("시작 전") },

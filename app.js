@@ -18,6 +18,19 @@ const CHECKLIST_AUTO_MAP = [
   { index: 1, quizTypes: ["grammar", "reading"] },
   { index: 2, quizTypes: ["listening"] },
 ];
+// The field that uniquely identifies an entry within each quiz type's data
+// file, used to track which specific items were answered wrong (see
+// WRONG_ITEMS_KEY / buildQuizPool) so they resurface in later rounds.
+const QUIZ_KEY_FIELD = {
+  hiragana: "char",
+  katakana: "char",
+  vocab: "word",
+  kanji: "word",
+  grammar: "sentence",
+  reading: "passage",
+  listening: "script",
+};
+const WRONG_ITEMS_KEY = `jlpt_wrong_items_${CURRENT_LEVEL}`;
 
 function todayStr(d = new Date()) {
   const y = d.getFullYear();
@@ -266,12 +279,56 @@ function pickDistractors(items, correctValue, field) {
     .map((v) => v[field]);
 }
 
+function loadWrongItems() {
+  try {
+    return JSON.parse(localStorage.getItem(WRONG_ITEMS_KEY)) || {};
+  } catch {
+    return {};
+  }
+}
+
+function saveWrongItems(data) {
+  try {
+    localStorage.setItem(WRONG_ITEMS_KEY, JSON.stringify(data));
+  } catch {
+    /* localStorage unavailable — wrong-answer tracking just won't persist */
+  }
+}
+
+// Marks an item right or wrong for a quiz type. Wrong items stay flagged
+// (so they resurface in later rounds via buildQuizPool) until answered
+// correctly, at which point they're cleared — a simple leaky-bucket review
+// queue, not full spaced repetition with intervals.
+function recordAnswerOutcome(type, itemKey, correct) {
+  if (!itemKey) return;
+  const data = loadWrongItems();
+  const set = new Set(data[type] || []);
+  if (correct) set.delete(itemKey);
+  else set.add(itemKey);
+  data[type] = [...set];
+  saveWrongItems(data);
+}
+
+// Fills a quiz round by putting every currently-wrong item first (shuffled),
+// then topping up with fresh items so previously-missed questions keep
+// coming back until mastered, without the round being *only* review items.
+function buildQuizPool(items, wrongKeys, keyField, size) {
+  if (!keyField || wrongKeys.length === 0) return shuffle(items).slice(0, size);
+  const wrongItems = items.filter((v) => wrongKeys.includes(v[keyField]));
+  const otherItems = items.filter((v) => !wrongKeys.includes(v[keyField]));
+  const pool = shuffle(wrongItems).slice(0, size);
+  if (pool.length < size) pool.push(...shuffle(otherItems).slice(0, size - pool.length));
+  return shuffle(pool);
+}
+
 async function startQuiz(type) {
   const res = await fetch(`data/${CURRENT_LEVEL}/${type}.json`);
   const items = await res.json();
   quiz.type = type;
   quiz.allItems = items;
-  quiz.pool = shuffle(items).slice(0, Math.min(10, items.length));
+  const keyField = QUIZ_KEY_FIELD[type];
+  const wrongKeys = loadWrongItems()[type] || [];
+  quiz.pool = buildQuizPool(items, wrongKeys, keyField, Math.min(10, items.length));
   quiz.index = 0;
   quiz.score = 0;
 
@@ -366,7 +423,8 @@ function explanationFor(type, item) {
 function selectAnswer(btn, choice, answer, item) {
   const buttons = document.querySelectorAll(".choice-btn");
   buttons.forEach((b) => (b.disabled = true));
-  if (choice === answer) {
+  const isCorrect = choice === answer;
+  if (isCorrect) {
     btn.classList.add("correct");
     quiz.score++;
   } else {
@@ -375,6 +433,7 @@ function selectAnswer(btn, choice, answer, item) {
       if (b.textContent === answer) b.classList.add("correct");
     });
   }
+  recordAnswerOutcome(quiz.type, item[QUIZ_KEY_FIELD[quiz.type]], isCorrect);
   const noteEl = document.getElementById("quiz-note");
   const note = explanationFor(quiz.type, item);
   if (note) {
