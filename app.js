@@ -1,6 +1,14 @@
 const CURRENT_LEVEL = "n4"; // active JLPT level; see data/levels.json. Switch this (and eventually add a picker) once a new level's data/<level>/ folder exists.
 const CHECKLIST_ITEMS = ["단어·한자 학습/복습", "문법·진도 학습", "청해 연습", "전날 내용 복습"];
 const STORAGE_KEY = `jlpt_daily_checklist_${CURRENT_LEVEL}`;
+const QUIZ_RESULTS_KEY = `jlpt_quiz_results_${CURRENT_LEVEL}`;
+const QUIZ_TYPE_LABELS = {
+  vocab: "단어 쪽지시험",
+  kanji: "한자 쪽지시험",
+  grammar: "문법 쪽지시험",
+  reading: "독해 쪽지시험",
+  listening: "청해 쪽지시험",
+};
 
 function todayStr(d = new Date()) {
   const y = d.getFullYear();
@@ -164,7 +172,9 @@ function setupQuiz() {
   document.getElementById("quiz-retry").addEventListener("click", () => {
     document.getElementById("quiz-result").hidden = true;
     document.getElementById("quiz-start").hidden = false;
+    renderQuizStartStatus();
   });
+  renderQuizStartStatus();
 }
 
 function speak(text) {
@@ -173,6 +183,48 @@ function speak(text) {
   const utter = new SpeechSynthesisUtterance(text);
   utter.lang = "ja-JP";
   window.speechSynthesis.speak(utter);
+}
+
+function loadQuizResults() {
+  try {
+    return JSON.parse(localStorage.getItem(QUIZ_RESULTS_KEY)) || {};
+  } catch {
+    return {};
+  }
+}
+
+function saveQuizResults(data) {
+  try {
+    localStorage.setItem(QUIZ_RESULTS_KEY, JSON.stringify(data));
+  } catch {
+    /* localStorage unavailable — today's completion mark just won't persist */
+  }
+}
+
+function recordQuizResult(type, score, total) {
+  const today = todayStr();
+  const data = loadQuizResults();
+  data[today] = data[today] || {};
+  data[today][type] = { score, total };
+  saveQuizResults(data);
+}
+
+// Marks each quiz-type button with today's result (✓ + score), if it's been
+// taken today. Resets naturally at midnight since it's keyed by todayStr().
+function renderQuizStartStatus() {
+  const todayResults = loadQuizResults()[todayStr()] || {};
+  document.querySelectorAll(".quiz-type-btn").forEach((btn) => {
+    const type = btn.dataset.type;
+    const label = QUIZ_TYPE_LABELS[type];
+    const result = todayResults[type];
+    if (result) {
+      btn.textContent = `✓ ${label} (${result.score}/${result.total})`;
+      btn.classList.add("done-today");
+    } else {
+      btn.textContent = label;
+      btn.classList.remove("done-today");
+    }
+  });
 }
 
 function pickDistractors(items, correctValue, field) {
@@ -280,6 +332,7 @@ function nextQuestion() {
     document.getElementById("quiz-play").hidden = true;
     document.getElementById("quiz-result").hidden = false;
     document.getElementById("quiz-score").textContent = `${quiz.score} / ${quiz.pool.length} 정답!`;
+    recordQuizResult(quiz.type, quiz.score, quiz.pool.length);
   } else {
     renderQuestion();
   }

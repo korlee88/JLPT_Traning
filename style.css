@@ -124,6 +124,7 @@ main {
   cursor: pointer;
 }
 .quiz-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.quiz-type-btn.done-today { background: var(--good); }
 
 .quiz-prompt { font-size: 1.3rem; font-weight: 600; margin: 16px 0 4px; white-space: pre-wrap; }
 .quiz-prompt.passage { font-size: 1rem; font-weight: 400; line-height: 1.6; text-align: left; }
