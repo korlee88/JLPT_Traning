@@ -92,11 +92,14 @@ async function main() {
       const streakDays = await page.$$eval("#streak .day", (els) => els.length);
       assert(streakDays === 14, `streak grid renders 14 days (got ${streakDays})`);
 
-      await page.locator('#checklist input[type="checkbox"]').first().check();
+      // Uses item 3 (no quiz auto-check maps to it) so it doesn't interfere with
+      // the quiz-driven checklist assertions later in this test.
+      await page.locator('#checklist input[type="checkbox"]').nth(3).check();
       await page.reload({ waitUntil: "networkidle" });
       await page.waitForSelector("#checklist input");
-      const persisted = await page.locator('#checklist input[type="checkbox"]').first().isChecked();
+      const persisted = await page.locator('#checklist input[type="checkbox"]').nth(3).isChecked();
       assert(persisted, "checklist state persists across reload (localStorage)");
+      await page.locator('#checklist input[type="checkbox"]').nth(3).uncheck(); // reset for the quiz auto-check assertions below
 
       await page.click('.tab-btn[data-tab="plan"]');
       await page.waitForSelector("#plan-table tbody tr");
@@ -132,15 +135,30 @@ async function main() {
         assert(btnClass.includes("done-today"), `${startButtonId}: marked done-today`);
       }
 
+      async function checklistChecked(i) {
+        return page.locator('#checklist input[type="checkbox"]').nth(i).isChecked();
+      }
+
       await page.click('.tab-btn[data-tab="quiz"]');
+
+      assert(!(await checklistChecked(0)), "checklist item 0 starts unchecked before any word/kana/kanji quiz today");
+      await runQuizRound("#start-hiragana", async () => {
+        const hint = await page.textContent("#quiz-hint");
+        assert(hint.includes("로마자"), `hiragana quiz asks for romaji (got "${hint}")`);
+      });
+      assert(await checklistChecked(0), "completing the hiragana quiz auto-checks checklist item 0 (단어·한자 학습/복습)");
+
+      await runQuizRound("#start-katakana");
 
       await runQuizRound("#start-vocab", async () => {
         assert(!(await page.isVisible("#quiz-replay")), "replay button stays hidden outside listening mode (vocab)");
       });
 
+      assert(!(await checklistChecked(1)), "checklist item 1 starts unchecked before any grammar/reading quiz today");
       await runQuizRound("#start-grammar", null, async () => {
         assert(await page.isVisible("#quiz-note"), "grammar quiz shows an explanation note after answering");
       });
+      assert(await checklistChecked(1), "completing the grammar quiz auto-checks checklist item 1 (문법·진도 학습)");
 
       await runQuizRound("#start-kanji", async () => {
         const kanjiHint = await page.textContent("#quiz-hint");
@@ -153,6 +171,7 @@ async function main() {
         assert(!(await page.isVisible("#quiz-replay")), "replay button stays hidden outside listening mode (reading)");
       });
 
+      assert(!(await checklistChecked(2)), "checklist item 2 starts unchecked before any listening quiz today");
       await runQuizRound(
         "#start-listening",
         async () => {
@@ -163,6 +182,8 @@ async function main() {
           assert(listeningNote.startsWith("스크립트:"), `listening quiz reveals the script after answering (got "${listeningNote}")`);
         }
       );
+      assert(await checklistChecked(2), "completing the listening quiz auto-checks checklist item 2 (청해 연습)");
+      assert(!(await checklistChecked(3)), "checklist item 3 (전날 내용 복습) has no quiz proxy and stays unchecked");
 
       const nextDay = addDaysToDateStr(plan.weeks[2].start, 1);
       await withFixedDate(page, nextDay);
@@ -170,6 +191,7 @@ async function main() {
       await page.click('.tab-btn[data-tab="quiz"]');
       const vocabBtnTextNextDay = await page.textContent("#start-vocab");
       assert(!vocabBtnTextNextDay.startsWith("✓"), `completion badge resets on a new day (got "${vocabBtnTextNextDay}")`);
+      assert(!(await checklistChecked(0)), "auto-checked checklist items also reset on a new day");
 
       assert(consoleErrors.length === 0, `no console errors (got ${JSON.stringify(consoleErrors)})`);
       await page.close();
