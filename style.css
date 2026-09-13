@@ -146,7 +146,7 @@ main {
 .choice-btn.wrong { background: var(--bad); color: #fff; border-color: var(--bad); }
 .choice-btn:disabled { cursor: default; }
 
-.quiz-note { margin-top: 12px; color: var(--muted); font-size: 0.9rem; }
+.quiz-note { margin-top: 12px; color: var(--muted); font-size: 0.9rem; white-space: pre-line; }
 
 table#plan-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
 #plan-table th, #plan-table td { text-align: left; padding: 8px 4px; border-bottom: 1px solid var(--border); vertical-align: top; }

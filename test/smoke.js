@@ -142,16 +142,25 @@ async function main() {
       await page.click('.tab-btn[data-tab="quiz"]');
 
       assert(!(await checklistChecked(0)), "checklist item 0 starts unchecked before any word/kana/kanji quiz today");
-      await runQuizRound("#start-hiragana", async () => {
-        const hint = await page.textContent("#quiz-hint");
-        assert(hint.includes("한글"), `hiragana quiz asks for hangul reading (got "${hint}")`);
-      });
+      await runQuizRound(
+        "#start-hiragana",
+        async () => {
+          const hint = await page.textContent("#quiz-hint");
+          assert(hint.includes("한글"), `hiragana quiz asks for hangul reading (got "${hint}")`);
+        },
+        async () => {
+          const note = await page.textContent("#quiz-note");
+          assert(/^.+ = .+$/.test(note.trim()), `hiragana quiz explains the char=hangul pairing after answering (got "${note}")`);
+        }
+      );
       assert(await checklistChecked(0), "completing the hiragana quiz auto-checks checklist item 0 (단어·한자 학습/복습)");
 
       await runQuizRound("#start-katakana");
 
-      await runQuizRound("#start-vocab", async () => {
+      await runQuizRound("#start-vocab", null, async () => {
         assert(!(await page.isVisible("#quiz-replay")), "replay button stays hidden outside listening mode (vocab)");
+        const note = await page.textContent("#quiz-note");
+        assert(note.includes("=") && note.includes("("), `vocab quiz explains word/reading/meaning after answering (got "${note}")`);
       });
 
       assert(!(await checklistChecked(1)), "checklist item 1 starts unchecked before any grammar/reading quiz today");
@@ -160,16 +169,29 @@ async function main() {
       });
       assert(await checklistChecked(1), "completing the grammar quiz auto-checks checklist item 1 (문법·진도 학습)");
 
-      await runQuizRound("#start-kanji", async () => {
-        const kanjiHint = await page.textContent("#quiz-hint");
-        assert(kanjiHint.includes("읽는 법"), `kanji quiz asks for reading (got "${kanjiHint}")`);
-      });
+      await runQuizRound(
+        "#start-kanji",
+        async () => {
+          const kanjiHint = await page.textContent("#quiz-hint");
+          assert(kanjiHint.includes("읽는 법"), `kanji quiz asks for reading (got "${kanjiHint}")`);
+        },
+        async () => {
+          const note = await page.textContent("#quiz-note");
+          assert(note.includes("→") && note.includes("("), `kanji quiz explains word/reading/meaning after answering (got "${note}")`);
+        }
+      );
 
-      await runQuizRound("#start-reading", async () => {
-        const promptClass = await page.getAttribute("#quiz-prompt", "class");
-        assert(promptClass.includes("passage"), "reading quiz renders the passage in passage style");
-        assert(!(await page.isVisible("#quiz-replay")), "replay button stays hidden outside listening mode (reading)");
-      });
+      await runQuizRound(
+        "#start-reading",
+        async () => {
+          const promptClass = await page.getAttribute("#quiz-prompt", "class");
+          assert(promptClass.includes("passage"), "reading quiz renders the passage in passage style");
+          assert(!(await page.isVisible("#quiz-replay")), "replay button stays hidden outside listening mode (reading)");
+        },
+        async () => {
+          assert(await page.isVisible("#quiz-note"), "reading quiz shows an explanation note after answering");
+        }
+      );
 
       assert(!(await checklistChecked(2)), "checklist item 2 starts unchecked before any listening quiz today");
       await runQuizRound(
@@ -179,7 +201,10 @@ async function main() {
         },
         async () => {
           const listeningNote = await page.textContent("#quiz-note");
-          assert(listeningNote.startsWith("스크립트:"), `listening quiz reveals the script after answering (got "${listeningNote}")`);
+          assert(
+            listeningNote.includes("스크립트:") && listeningNote.includes("뜻:"),
+            `listening quiz reveals both script and meaning after answering (got "${listeningNote}")`
+          );
         }
       );
       assert(await checklistChecked(2), "completing the listening quiz auto-checks checklist item 2 (청해 연습)");
