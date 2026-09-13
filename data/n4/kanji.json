@@ -43,5 +43,8 @@
   { "word": "来年", "reading": "らいねん", "meaning": "내년" },
   { "word": "毎日", "reading": "まいにち", "meaning": "매일" },
   { "word": "毎朝", "reading": "まいあさ", "meaning": "매일 아침" },
-  { "word": "一番", "reading": "いちばん", "meaning": "제일/가장" }
+  { "word": "一番", "reading": "いちばん", "meaning": "제일/가장" },
+  { "word": "朝ご飯", "reading": "あさごはん", "meaning": "아침밥(회화체, 朝食의 캐주얼한 표현)" },
+  { "word": "昼ご飯", "reading": "ひるごはん", "meaning": "점심밥(회화체, 昼食의 캐주얼한 표현)" },
+  { "word": "晩ご飯", "reading": "ばんごはん", "meaning": "저녁밥(회화체, 夕食의 캐주얼한 표현)" }
 ]

@@ -58,5 +58,8 @@
   { "word": "だんだん", "reading": "だんだん", "meaning": "점점" },
   { "word": "ずっと", "reading": "ずっと", "meaning": "계속/훨씬" },
   { "word": "なかなか", "reading": "なかなか", "meaning": "좀처럼/꽤" },
-  { "word": "そろそろ", "reading": "そろそろ", "meaning": "슬슬" }
+  { "word": "そろそろ", "reading": "そろそろ", "meaning": "슬슬" },
+  { "word": "朝ご飯", "reading": "あさごはん", "meaning": "아침밥(회화체)" },
+  { "word": "昼ご飯", "reading": "ひるごはん", "meaning": "점심밥(회화체)" },
+  { "word": "晩ご飯", "reading": "ばんごはん", "meaning": "저녁밥(회화체)" }
 ]
