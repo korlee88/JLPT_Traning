@@ -65,5 +65,22 @@
   { "word": "意見", "reading": "いけん", "meaning": "의견" },
   { "word": "石", "reading": "いし", "meaning": "돌" },
   { "word": "医者", "reading": "いしゃ", "meaning": "의사" },
-  { "word": "以上", "reading": "いじょう", "meaning": "이상" }
+  { "word": "以上", "reading": "いじょう", "meaning": "이상" },
+  { "word": "急ぐ", "reading": "いそぐ", "meaning": "서두르다" },
+  { "word": "一度", "reading": "いちど", "meaning": "한 번" },
+  { "word": "糸", "reading": "いと", "meaning": "실" },
+  { "word": "妹", "reading": "いもうと", "meaning": "여동생" },
+  { "word": "色", "reading": "いろ", "meaning": "색" },
+  { "word": "動く", "reading": "うごく", "meaning": "움직이다, 작동하다" },
+  { "word": "歌", "reading": "うた", "meaning": "노래" },
+  { "word": "歌う", "reading": "うたう", "meaning": "노래하다" },
+  { "word": "写す", "reading": "うつす", "meaning": "베끼다, (사진을) 찍다" },
+  { "word": "海", "reading": "うみ", "meaning": "바다" },
+  { "word": "売る", "reading": "うる", "meaning": "팔다" },
+  { "word": "売れる", "reading": "うれる", "meaning": "팔리다" },
+  { "word": "営業", "reading": "えいぎょう", "meaning": "영업" },
+  { "word": "英語", "reading": "えいご", "meaning": "영어" },
+  { "word": "駅員", "reading": "えきいん", "meaning": "역무원" },
+  { "word": "起きる", "reading": "おきる", "meaning": "일어나다, 깨다" },
+  { "word": "送る", "reading": "おくる", "meaning": "보내다, (우편을) 부치다, 배웅하다" }
 ]
