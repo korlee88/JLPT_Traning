@@ -25,6 +25,8 @@ Deploy is automatic: push to `main` → `.github/workflows/deploy-pages.yml` →
 - **Two views of the same schedule, kept in sync by hand.** `STUDY_PLAN.md` (human-readable) and `data/<level>/plan.json` (what the app renders) describe the same weekly breakdown. There is no generator linking them — if you change one, update the other, or they will silently drift.
 - **Dates come from the real clock, always.** `todayStr()` formats `Date` using local `getFullYear/getMonth/getDate`, never `toISOString()`. `toISOString()` converts to UTC, which shifts the calendar date during early-morning hours in KST and would make the app show the wrong week/D-day for part of the day. `test/smoke.js` mocks `Date` (see `withFixedDate`) to check week/D-day logic at plan boundaries (before start, week 1, exam day, after exam) — extend those cases if you touch that logic.
 - **GitHub Pages deploy gotcha (already hit once):** the first deploy failed with `Branch "main" is not allowed to deploy to github-pages due to environment protection rules`. Fix is in the repo owner's GitHub Settings, not in code: Settings → Environments → `github-pages` → Deployment branches and tags → set to "No restriction". Claude's GitHub App token also cannot call the Actions API to trigger or re-run a workflow (`403 Resource not accessible by integration`) — recovering a failed Pages deploy needs a human to click "Re-run jobs" or push a new commit.
+- **The quiz prompt is deliberately oversized.** `.quiz-prompt` is `2.6rem` — double its original `1.3rem` — because the owner studies off a phone and has to make out kanji strokes. Don't "tidy" it back down. `.quiz-prompt.passage` keeps its own `1rem` override so 독해 passages stay paragraph-sized; long 문법 sentences do wrap over several lines at this size, which was the accepted trade.
+- **Verify every merge, even a clean one.** Realigning the working branch with `main` after a squash-merge has twice produced *silently duplicated code with no conflict markers* — once a duplicated `speak()`/`pickDistractors()` in `app.js`, once a duplicated `const` in `test/smoke.js` that would have been an outright `SyntaxError`. After any merge, before pushing: run `node --check app.js && node --check test/smoke.js`, grep for duplicate declarations, and diff against the pre-merge commit (a realign-only merge should produce an **empty** diff). Then `npm test`.
 
 ## Adding a new level (N3, then N2, then N1)
 
@@ -48,7 +50,7 @@ listening.json  [{ script, meaning }]                   quiz speaks `script` via
                                                           distractors drawn from other entries' meanings
 ```
 
-**Every quiz type shows an explanation after answering** (right or wrong), via `explanationFor()` in `app.js` — not just a red/green highlight. For `grammar`/`reading` this is the data's own `note` field (write one for every new entry: point at the specific sentence/clause that gives the answer, not just restate it). The other types don't need authored notes; `explanationFor()` builds the recap straight from the entry's own fields (e.g. `word (reading) = meaning`).
+**Every quiz type shows an explanation after answering** (right or wrong), via `explanationFor()` in `app.js` — not just a red/green highlight. For `grammar`/`reading` this is the data's own `note` field. Write one for every new entry, and make it earn its place: quote the exact sentence/clause that decides the answer, say *why* that leads to the correct choice, and account for the wrong choices — a superseded detail (the pre-change time/floor in the 会議 passage), a statement the text contradicts, or simply "not mentioned in the passage at all". `reading.json`'s notes were rewritten to that bar in #9 because a bare sentence pointer was too thin to learn from; match them rather than regressing. The other types don't need authored notes; `explanationFor()` builds the recap straight from the entry's own fields (e.g. `word (reading) = meaning`).
 
 `hiragana`/`katakana` cover only the base 46-character gojuon table each (no dakuten/handakuten or combination sounds yet) — extend them the same way if that's ever wanted. `hangul` uses the **word-initial** form from 국립국어원's 외래어 표기법 (e.g. か→가, つ→쓰, て→데), consistently, even though real words shift か/た/て/と etc. to the aspirated 어중 form (카/타/테/토) mid-word — that distinction is out of scope for a single-character reading quiz and would need actual word context to teach correctly. ん is shown as 응, a teaching convention for the isolated mora — the official rule (always ㄴ batchim) only applies to ん attached to a word.
 
@@ -60,7 +62,20 @@ listening.json  [{ script, meaning }]                   quiz speaks `script` via
 
 **Listening quiz depends on the browser's Web Speech API** (`speechSynthesis`, `lang: "ja-JP"`) — there are no audio files. This means quality depends on whatever Japanese TTS voice the visitor's browser/OS provides (works well on Chrome desktop; may be silent or absent elsewhere). It degrades gracefully either way: the transcript is always revealed in the note after answering, so the quiz stays usable without audio.
 
+## Daily 기출 어휘 batches (ongoing)
+
+The owner is working through the 동양북스 textbook's **기출 어휘 → もんだい1 한자 읽기** list at roughly 20 words a day, photographing the page after each day's study. Each photo gets transcribed into `data/n4/kanji.json` so exactly those words come up in the 한자 쪽지시험.
+
+- **Where the list stands:** あ행 items 1–20 (`青い` … `以上`) are in, added 2026-09-14 as batch 1 (#10). The next batch starts at `急ぐ`.
+- `kanji.json` is the real source of truth — if a photo's range is ambiguous, cross-check what's already in the file rather than trusting the line above.
+- The photos carry the owner's own handwritten progress marks (batch 1's read `1.20 9/14` — items 1–20, studied 9/14). Use them to read off where a batch begins and ends, and say which range you inferred when reporting back, so a misread is easy to catch.
+- **Check for an existing entry before adding.** `word` is the uniqueness key the wrong-answer queue depends on (`QUIZ_KEY_FIELD`), so a second `安心` wouldn't merely duplicate a question — it would corrupt that tracking. Batch 1 skipped `安心` for exactly this reason; expect more overlaps as the list advances into rows the early hand-authored entries already covered.
+- Entries from this list include い-adjectives and verbs (`青い`, `開ける`, `集まる`), not just the noun compounds `kanji.json` started with. That's correct — real JLPT 한자 읽기 questions cover all of them.
+- A word already in `vocab.json` may still be added here: `vocab.json` quizzes meaning, `kanji.json` quizzes reading, so they drill different things. `明るい`, `洗う`, `歩く` are deliberately in both.
+- Ship each batch the same way as any other change: validate (no duplicate `word` keys, every field present), `npm test`, then commit → PR → squash-merge → realign the branch.
+
 ## Content accuracy and copyright
 
 - Vocab/grammar entries must be standard, verifiable JLPT-level content — don't invent a word/reading/meaning or a grammar pattern that isn't real.
 - Never transcribe the textbook's own exercises, example sentences, or passages into `data/`. Write original example sentences for the same grammar point instead — reference the pattern/level, not the book's text.
+- A **word/reading/meaning list** is on the right side of that line and may be transcribed (this is what the daily 기출 어휘 batches above do): `青い / あおい / 파랗다` is dictionary-level fact, not authored expression. What stays off-limits is the book's own sentences — its exercise items, example sentences, and reading passages.
