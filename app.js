@@ -31,6 +31,11 @@ const QUIZ_KEY_FIELD = {
   listening: "script",
 };
 const WRONG_ITEMS_KEY = `jlpt_wrong_items_${CURRENT_LEVEL}`;
+// Questions per round. Kana and kanji are single-item recall — fast per
+// question — so they run longer rounds; types not listed here use the default.
+// A round is still capped at the number of entries the data file actually has.
+const DEFAULT_ROUND_SIZE = 10;
+const QUIZ_ROUND_SIZE = { hiragana: 20, katakana: 20, kanji: 20 };
 
 function todayStr(d = new Date()) {
   const y = d.getFullYear();
@@ -328,7 +333,8 @@ async function startQuiz(type) {
   quiz.allItems = items;
   const keyField = QUIZ_KEY_FIELD[type];
   const wrongKeys = loadWrongItems()[type] || [];
-  quiz.pool = buildQuizPool(items, wrongKeys, keyField, Math.min(10, items.length));
+  const roundSize = QUIZ_ROUND_SIZE[type] || DEFAULT_ROUND_SIZE;
+  quiz.pool = buildQuizPool(items, wrongKeys, keyField, Math.min(roundSize, items.length));
   quiz.index = 0;
   quiz.score = 0;
 

@@ -111,11 +111,29 @@ async function main() {
       // `onFirstAnswer` right after that first answer is submitted. Ends back at the
       // quiz list screen via "쪽지시험 목록으로", and checks that button now shows
       // today's completion badge.
+      // Questions expected per round, mirroring QUIZ_ROUND_SIZE/DEFAULT_ROUND_SIZE
+      // in app.js. 독해 is 8 rather than 10 because reading.json only has 8
+      // entries and a round is capped at the data file's size — if that file
+      // grows past 10, this expectation moves to 10.
+      const EXPECTED_ROUND_SIZE = {
+        "#start-hiragana": 20,
+        "#start-katakana": 20,
+        "#start-kanji": 20,
+        "#start-vocab": 10,
+        "#start-grammar": 10,
+        "#start-reading": 8,
+        "#start-listening": 10,
+      };
+
       async function runQuizRound(startButtonId, onFirstQuestion, onFirstAnswer) {
         await page.click(startButtonId);
         await page.waitForSelector("#quiz-choices .choice-btn");
         const progress = await page.textContent("#quiz-progress");
         const total = Number(progress.split("/")[1].trim());
+        assert(
+          total === EXPECTED_ROUND_SIZE[startButtonId],
+          `${startButtonId}: round asks ${EXPECTED_ROUND_SIZE[startButtonId]} questions (got ${total})`
+        );
         for (let i = 0; i < total; i++) {
           await page.waitForSelector("#quiz-choices .choice-btn");
           if (i === 0 && onFirstQuestion) await onFirstQuestion();
