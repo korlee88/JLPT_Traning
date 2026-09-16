@@ -192,6 +192,15 @@ async function main() {
         async () => {
           const kanjiHint = await page.textContent("#quiz-hint");
           assert(kanjiHint.includes("읽는 법"), `kanji quiz asks for reading (got "${kanjiHint}")`);
+
+          // Distractors are picked for shape similarity (pickReadingDistractors),
+          // so guard the two ways that can go wrong: a repeated choice when two
+          // entries are homophones, and a choice that isn't a real reading.
+          const choices = await page.$$eval("#quiz-choices .choice-btn", (els) => els.map((e) => e.textContent.trim()));
+          const readings = await page.evaluate(() => quiz.allItems.map((i) => i.reading));
+          assert(choices.length === 4, `kanji quiz offers 4 choices (got ${choices.length})`);
+          assert(new Set(choices).size === 4, `kanji quiz choices are all distinct (got ${choices.join(" / ")})`);
+          assert(choices.every((c) => readings.includes(c)), `every kanji choice is a real reading from the data (got ${choices.join(" / ")})`);
         },
         async () => {
           const note = await page.textContent("#quiz-note");
