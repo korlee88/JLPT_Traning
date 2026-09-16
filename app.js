@@ -284,6 +284,38 @@ function pickDistractors(items, correctValue, field) {
     .map((v) => v[field]);
 }
 
+// Trailing hiragana of a word: 売れる -> "れる", 重い -> "い", 会場 -> "".
+function okuriganaTail(word) {
+  const match = word.match(/[぀-ゟ]+$/);
+  return match ? match[0] : "";
+}
+
+// Distractor readings for the kanji quiz. Picking them at random made the
+// answer guessable without reading the kanji at all — 売れる against
+// れんしゅう/げんき/いちど is decided by the trailing れる alone. This prefers
+// readings that survive that shortcut: same okurigana tail first, then a
+// similar mora count, then the same opening mora. Shuffling before the sort
+// keeps equally-good candidates from always landing in the same order.
+function pickReadingDistractors(items, item) {
+  const answer = item.reading;
+  const tail = okuriganaTail(item.word);
+  const score = (reading) => {
+    let s = 0;
+    if (tail) s += reading.endsWith(tail) ? 4 : -2;
+    s += Math.max(0, 3 - Math.abs(reading.length - answer.length));
+    if (reading[0] === answer[0]) s += 1;
+    return s;
+  };
+  // Dedupe by reading: preferring similar readings makes homophones likely to
+  // be picked together, which would show the same choice twice.
+  const seen = new Set([answer]);
+  return shuffle(items)
+    .filter((v) => !seen.has(v.reading) && seen.add(v.reading))
+    .sort((a, b) => score(b.reading) - score(a.reading))
+    .slice(0, 3)
+    .map((v) => v.reading);
+}
+
 function loadWrongItems() {
   try {
     return JSON.parse(localStorage.getItem(WRONG_ITEMS_KEY)) || {};
@@ -370,7 +402,7 @@ function renderQuestion() {
   } else if (quiz.type === "kanji") {
     promptEl.textContent = item.word;
     hintEl.textContent = `읽는 법을 고르세요 (뜻: ${item.meaning})`;
-    choices = shuffle([item.reading, ...pickDistractors(quiz.allItems, item.reading, "reading")]);
+    choices = shuffle([item.reading, ...pickReadingDistractors(quiz.allItems, item)]);
     answer = item.reading;
   } else if (quiz.type === "grammar") {
     promptEl.textContent = item.sentence;
