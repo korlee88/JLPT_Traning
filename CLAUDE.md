@@ -52,7 +52,17 @@ listening.json  [{ script, meaning }]                   quiz speaks `script` via
 
 **Every quiz type shows an explanation after answering** (right or wrong), via `explanationFor()` in `app.js` — not just a red/green highlight. For `grammar`/`reading` this is the data's own `note` field. Write one for every new entry, and make it earn its place: quote the exact sentence/clause that decides the answer, say *why* that leads to the correct choice, and account for the wrong choices — a superseded detail (the pre-change time/floor in the 会議 passage), a statement the text contradicts, or simply "not mentioned in the passage at all". `reading.json`'s notes were rewritten to that bar in #9 because a bare sentence pointer was too thin to learn from; match them rather than regressing. The other types don't need authored notes; `explanationFor()` builds the recap straight from the entry's own fields (e.g. `word (reading) = meaning`).
 
-`hiragana`/`katakana` cover only the base 46-character gojuon table each (no dakuten/handakuten or combination sounds yet) — extend them the same way if that's ever wanted. `hangul` uses the **word-initial** form from 국립국어원's 외래어 표기법 (e.g. か→가, つ→쓰, て→데), consistently, even though real words shift か/た/て/と etc. to the aspirated 어중 form (카/타/테/토) mid-word — that distinction is out of scope for a single-character reading quiz and would need actual word context to teach correctly. ん is shown as 응, a teaching convention for the isolated mora — the official rule (always ㄴ batchim) only applies to ん attached to a word.
+`hiragana`/`katakana` cover only the base 46-character gojuon table each (no dakuten/handakuten or combination sounds yet) — extend them the same way if that's ever wanted.
+
+`hangul` uses the **어중·어말 (aspirated) form** from 국립국어원's 외래어 표기법: か→카, た→타, ち→치, て→테, と→토. `つ`→쓰 is unchanged because the 표기법 gives it 쓰 in both positions. **Don't "correct" these back to the 어두 forms (가/다/지/데/도)** — the owner raised this on 2026-09-17 and the switch was deliberate:
+
+- A lone kana has no word position at all, so applying the 어두 rule to it was already an arbitrary choice, not the standard being followed.
+- Japanese word-initial voiceless stops sit *between* Korean 예사소리 and 거센소리, which is why perception splits; the 1986 committee judged them closer to 예사소리, and that call is still disputed.
+- Decisively: the 어두 form collides with dakuten. か=가 *and* が=가, た=다 *and* だ=다, ち=지 *and* ぢ=지 — so the quiz would become unanswerable the moment が행 is added. The aspirated form keeps each pair distinct (か=카 vs が=가).
+
+Two characters legitimately share a hangul value: お and を are both 오, because を really is pronounced /o/ in modern Japanese. That's not a bug to fix — but note `pickDistractors` doesn't dedupe, so if a future row ever duplicates a hangul value, the kana quiz can show the same choice twice (the kanji quiz's `pickReadingDistractors` already guards against this).
+
+ん is shown as 응, a teaching convention for the isolated mora — the official rule (always ㄴ batchim) only applies to ん attached to a word.
 
 `vocab`/`listening` use the shared `pickDistractors()` helper in `app.js` to build the 3 wrong choices at random from other entries in the same file, rather than hand-authoring distractors — keep new entries reasonably distinct in meaning so auto-picked distractors stay plausible-but-wrong, not nonsensical.
 
