@@ -385,7 +385,13 @@ function renderQuestion() {
   const promptEl = document.getElementById("quiz-prompt");
   const hintEl = document.getElementById("quiz-hint");
   const replayBtn = document.getElementById("quiz-replay");
-  promptEl.classList.remove("passage");
+  const revealEl = document.getElementById("quiz-reveal");
+  promptEl.classList.remove("passage", "tappable");
+  promptEl.onclick = null;
+  revealEl.hidden = true;
+  revealEl.classList.remove("revealed");
+  revealEl.onclick = null;
+  quiz.peeked = false;
   replayBtn.hidden = true;
   let choices, answer;
 
@@ -402,6 +408,19 @@ function renderQuestion() {
   } else if (quiz.type === "kanji") {
     promptEl.textContent = item.word;
     hintEl.textContent = `읽는 법을 고르세요 (뜻: ${item.meaning})`;
+    // Tap the word to see its reading when it's unreadable — better to look it
+    // up and learn it than to guess blind. quiz.peeked keeps that honest: see
+    // selectAnswer, which won't clear a peeked item from the review queue.
+    revealEl.textContent = "글자를 누르면 읽는 법";
+    revealEl.hidden = false;
+    promptEl.classList.add("tappable");
+    const reveal = () => {
+      revealEl.textContent = item.reading;
+      revealEl.classList.add("revealed");
+      quiz.peeked = true;
+    };
+    promptEl.onclick = reveal;
+    revealEl.onclick = reveal;
     choices = shuffle([item.reading, ...pickReadingDistractors(quiz.allItems, item)]);
     answer = item.reading;
   } else if (quiz.type === "grammar") {
@@ -471,7 +490,10 @@ function selectAnswer(btn, choice, answer, item) {
       if (b.textContent === answer) b.classList.add("correct");
     });
   }
-  recordAnswerOutcome(quiz.type, item[QUIZ_KEY_FIELD[quiz.type]], isCorrect);
+  // Reading the answer off the peek isn't recall, so a peeked item stays in the
+  // review queue even when answered right — otherwise "몰라서 보기" would clear
+  // exactly the words that still need drilling.
+  recordAnswerOutcome(quiz.type, item[QUIZ_KEY_FIELD[quiz.type]], isCorrect && !quiz.peeked);
   const noteEl = document.getElementById("quiz-note");
   const note = explanationFor(quiz.type, item);
   if (note) {

@@ -201,6 +201,14 @@ async function main() {
           assert(choices.length === 4, `kanji quiz offers 4 choices (got ${choices.length})`);
           assert(new Set(choices).size === 4, `kanji quiz choices are all distinct (got ${choices.join(" / ")})`);
           assert(choices.every((c) => readings.includes(c)), `every kanji choice is a real reading from the data (got ${choices.join(" / ")})`);
+
+          // Tapping the word reveals its reading; the cue sits there until then.
+          const cue = (await page.textContent("#quiz-reveal")).trim();
+          assert(cue === "글자를 누르면 읽는 법", `kanji quiz shows the tap cue before peeking (got "${cue}")`);
+          const expected = await page.evaluate(() => quiz.pool[quiz.index].reading);
+          await page.click("#quiz-prompt");
+          const revealed = (await page.textContent("#quiz-reveal")).trim();
+          assert(revealed === expected, `tapping the word reveals its reading (got "${revealed}", expected "${expected}")`);
         },
         async () => {
           const note = await page.textContent("#quiz-note");
@@ -278,6 +286,29 @@ async function main() {
         await page.click("#quiz-next");
       }
       assert(reappeared, `missed item "${missedPrompt}" was prioritized back into the next vocab round`);
+      await page.close();
+    }
+
+    // --- Peeking at a kanji reading keeps it in the review queue ---
+    {
+      const page = await browser.newPage();
+      await page.goto(URL, { waitUntil: "networkidle" });
+      await page.evaluate(() => localStorage.clear());
+      await page.reload({ waitUntil: "networkidle" });
+      await page.click('.tab-btn[data-tab="quiz"]');
+      await page.click("#start-kanji");
+      await page.waitForSelector("#quiz-choices .choice-btn");
+
+      const peeked = await page.evaluate(() => quiz.pool[quiz.index]);
+      await page.click("#quiz-prompt");
+      // Answer it correctly — without the peek this would clear it from review.
+      await page.locator("#quiz-choices .choice-btn", { hasText: peeked.reading }).first().click();
+
+      const queued = await page.evaluate(() => JSON.parse(localStorage.getItem("jlpt_wrong_items_n4") || "{}").kanji || []);
+      assert(
+        queued.includes(peeked.word),
+        `a peeked kanji stays in the review queue even when answered right (${peeked.word} in [${queued.join(", ")}])`
+      );
       await page.close();
     }
 
