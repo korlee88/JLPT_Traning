@@ -5,6 +5,7 @@ const QUIZ_RESULTS_KEY = `jlpt_quiz_results_${CURRENT_LEVEL}`;
 const QUIZ_TYPE_LABELS = {
   hiragana: "히라가나 쪽지시험",
   katakana: "가타카나 쪽지시험",
+  loanword: "외래어 쪽지시험",
   vocab: "단어 쪽지시험",
   kanji: "한자 쪽지시험",
   grammar: "문법 쪽지시험",
@@ -14,7 +15,7 @@ const QUIZ_TYPE_LABELS = {
 // Which CHECKLIST_ITEMS index each quiz type's completion auto-checks (see
 // autoCheckFromQuiz). Index 3 ("전날 내용 복습") has no quiz proxy and stays manual.
 const CHECKLIST_AUTO_MAP = [
-  { index: 0, quizTypes: ["hiragana", "katakana", "vocab", "kanji"] },
+  { index: 0, quizTypes: ["hiragana", "katakana", "loanword", "vocab", "kanji"] },
   { index: 1, quizTypes: ["grammar", "reading"] },
   { index: 2, quizTypes: ["listening"] },
 ];
@@ -24,6 +25,7 @@ const CHECKLIST_AUTO_MAP = [
 const QUIZ_KEY_FIELD = {
   hiragana: "char",
   katakana: "char",
+  loanword: "word",
   vocab: "word",
   kanji: "word",
   grammar: "sentence",
@@ -188,6 +190,7 @@ const quiz = { type: null, pool: [], index: 0, score: 0, allItems: [] };
 function setupQuiz() {
   document.getElementById("start-hiragana").addEventListener("click", () => startQuiz("hiragana"));
   document.getElementById("start-katakana").addEventListener("click", () => startQuiz("katakana"));
+  document.getElementById("start-loanword").addEventListener("click", () => startQuiz("loanword"));
   document.getElementById("start-vocab").addEventListener("click", () => startQuiz("vocab"));
   document.getElementById("start-kanji").addEventListener("click", () => startQuiz("kanji"));
   document.getElementById("start-grammar").addEventListener("click", () => startQuiz("grammar"));
@@ -282,6 +285,62 @@ function pickDistractors(items, correctValue, field) {
   return shuffle(items.filter((v) => v[field] !== correctValue))
     .slice(0, 3)
     .map((v) => v[field]);
+}
+
+// Near-miss katakana spellings, for the 외래어 quiz. The whole skill being
+// tested is spelling, so the wrong choices have to be the traps learners
+// actually fall into: a dropped or added 장음 ー (パートタイム/パトタイム),
+// the visually confusable pairs ソ/ン and シ/ツ, and 촉음 ッ vs full-size ツ.
+// Generating them keeps loanword.json a plain word list with nothing authored.
+// Shapes that look alike (ソ/ン, シ/ツ), size (ツ/ッ), and voicing — a missing
+// or stray 탁점 is one of the commonest spelling slips.
+const KATAKANA_SWAPS = [
+  "ソン", "シツ", "ツッ", "クケ",
+  "カガ", "キギ", "クグ", "ケゲ", "コゴ", "サザ", "シジ", "スズ", "セゼ", "ソゾ",
+  "タダ", "チヂ", "ツヅ", "テデ", "トド", "ハバ", "ヒビ", "フブ", "ヘベ", "ホボ",
+];
+
+function katakanaVariants(word) {
+  const chars = [...word];
+  const last = chars.length - 1;
+  const variants = new Set();
+  chars.forEach((c, i) => {
+    if (c === "ー") {
+      variants.add(chars.filter((_, j) => j !== i).join("")); // dropped 장음
+    } else if (i !== last && chars[i + 1] !== "ー") {
+      // Added 장음 — but never past the final mora: nobody writes バスー, and a
+      // choice that obviously broken is eliminated without reading it.
+      const lengthened = [...chars];
+      lengthened.splice(i + 1, 0, "ー");
+      variants.add(lengthened.join(""));
+    }
+    for (const pair of KATAKANA_SWAPS) {
+      const swap = c === pair[0] ? pair[1] : c === pair[1] ? pair[0] : null;
+      if (!swap) continue;
+      const swapped = [...chars];
+      swapped[i] = swap;
+      variants.add(swapped.join(""));
+    }
+  });
+  variants.delete(word);
+  return [...variants];
+}
+
+// Three wrong spellings for `item`, topped up from other entries' words on the
+// rare short word that yields fewer than three variants of its own.
+function pickSpellingDistractors(items, item) {
+  const picked = shuffle(katakanaVariants(item.word)).slice(0, 3);
+  if (picked.length < 3) {
+    const seen = new Set([item.word, ...picked]);
+    for (const other of shuffle(items)) {
+      if (picked.length === 3) break;
+      if (!seen.has(other.word)) {
+        picked.push(other.word);
+        seen.add(other.word);
+      }
+    }
+  }
+  return picked;
 }
 
 // Trailing hiragana of a word: 売れる -> "れる", 重い -> "い", 会場 -> "".
@@ -400,6 +459,13 @@ function renderQuestion() {
     hintEl.textContent = "읽는 법(한글)을 고르세요";
     choices = shuffle([item.hangul, ...pickDistractors(quiz.allItems, item.hangul, "hangul")]);
     answer = item.hangul;
+  } else if (quiz.type === "loanword") {
+    // Korean meaning in, katakana spelling out — the direction that actually
+    // tests 장음/촉음, which reading the word back to Korean never would.
+    promptEl.textContent = item.meaning;
+    hintEl.textContent = "가타카나 표기를 고르세요";
+    choices = shuffle([item.word, ...pickSpellingDistractors(quiz.allItems, item)]);
+    answer = item.word;
   } else if (quiz.type === "vocab") {
     promptEl.textContent = `${item.word} (${item.reading})`;
     hintEl.textContent = "뜻을 고르세요";
@@ -462,6 +528,8 @@ function explanationFor(type, item) {
     case "hiragana":
     case "katakana":
       return `${item.char} = ${item.hangul}`;
+    case "loanword":
+      return `${item.word} = ${item.meaning}`;
     case "vocab":
       return `${item.word} (${item.reading}) = ${item.meaning}`;
     case "kanji":

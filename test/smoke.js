@@ -118,6 +118,7 @@ async function main() {
       const EXPECTED_ROUND_SIZE = {
         "#start-hiragana": 20,
         "#start-katakana": 20,
+        "#start-loanword": 10,
         "#start-kanji": 20,
         "#start-vocab": 10,
         "#start-grammar": 10,
@@ -174,6 +175,33 @@ async function main() {
       assert(await checklistChecked(0), "completing the hiragana quiz auto-checks checklist item 0 (단어·한자 학습/복습)");
 
       await runQuizRound("#start-katakana");
+
+      await runQuizRound(
+        "#start-loanword",
+        async () => {
+          const hint = await page.textContent("#quiz-hint");
+          assert(hint.includes("가타카나 표기"), `외래어 quiz asks for the katakana spelling (got "${hint}")`);
+
+          // The distractors are generated near-misses, so what matters is that
+          // they're distinct, all katakana, and none of them is the answer twice.
+          const choices = await page.$$eval("#quiz-choices .choice-btn", (els) => els.map((e) => e.textContent.trim()));
+          const answer = await page.evaluate(() => quiz.pool[quiz.index].word);
+          assert(new Set(choices).size === 4, `외래어 choices are all distinct (got ${choices.join(" / ")})`);
+          assert(choices.includes(answer), `the correct spelling is among the choices (${answer} in ${choices.join(" / ")})`);
+          assert(
+            choices.every((c) => /^[ァ-ヶー]+$/.test(c)),
+            `every 외래어 choice is katakana (got ${choices.join(" / ")})`
+          );
+          assert(
+            choices.filter((c) => c !== answer).every((c) => c.length > 0),
+            "no empty distractor spellings"
+          );
+        },
+        async () => {
+          const note = await page.textContent("#quiz-note");
+          assert(note.includes("="), `외래어 quiz explains word = meaning after answering (got "${note}")`);
+        }
+      );
 
       await runQuizRound("#start-vocab", null, async () => {
         assert(!(await page.isVisible("#quiz-replay")), "replay button stays hidden outside listening mode (vocab)");
