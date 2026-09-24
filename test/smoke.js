@@ -205,6 +205,7 @@ async function main() {
 
       await runQuizRound("#start-vocab", null, async () => {
         assert(!(await page.isVisible("#quiz-replay")), "replay button stays hidden outside listening mode (vocab)");
+        assert(!(await page.isVisible("#quiz-meaning")), "meaning hint stays hidden outside the kanji quiz (vocab)");
         const note = await page.textContent("#quiz-note");
         assert(note.includes("=") && note.includes("("), `vocab quiz explains word/reading/meaning after answering (got "${note}")`);
       });
@@ -220,6 +221,22 @@ async function main() {
         async () => {
           const kanjiHint = await page.textContent("#quiz-hint");
           assert(kanjiHint.includes("읽는 법"), `kanji quiz asks for reading (got "${kanjiHint}")`);
+
+          // The meaning is a hint now, not part of the prompt — it must not be
+          // readable anywhere on screen until the hint line is tapped.
+          const kanjiMeaning = await page.evaluate(() => quiz.pool[quiz.index].meaning);
+          assert(
+            !kanjiHint.includes(kanjiMeaning),
+            `kanji hint line no longer gives the meaning away (got "${kanjiHint}")`
+          );
+          const meaningCue = (await page.textContent("#quiz-meaning")).trim();
+          assert(meaningCue === "💡 뜻 힌트", `kanji quiz shows the meaning cue before tapping (got "${meaningCue}")`);
+          await page.click("#quiz-meaning");
+          const meaningShown = (await page.textContent("#quiz-meaning")).trim();
+          assert(
+            meaningShown === `뜻: ${kanjiMeaning}`,
+            `tapping the hint reveals the meaning (got "${meaningShown}", expected "뜻: ${kanjiMeaning}")`
+          );
 
           // Distractors are picked for shape similarity (pickReadingDistractors),
           // so guard the two ways that can go wrong: a repeated choice when two

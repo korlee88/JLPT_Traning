@@ -445,11 +445,15 @@ function renderQuestion() {
   const hintEl = document.getElementById("quiz-hint");
   const replayBtn = document.getElementById("quiz-replay");
   const revealEl = document.getElementById("quiz-reveal");
+  const meaningEl = document.getElementById("quiz-meaning");
   promptEl.classList.remove("passage", "tappable");
   promptEl.onclick = null;
   revealEl.hidden = true;
   revealEl.classList.remove("revealed");
   revealEl.onclick = null;
+  meaningEl.hidden = true;
+  meaningEl.classList.remove("revealed");
+  meaningEl.onclick = null;
   quiz.peeked = false;
   replayBtn.hidden = true;
   let choices, answer;
@@ -473,7 +477,17 @@ function renderQuestion() {
     answer = item.meaning;
   } else if (quiz.type === "kanji") {
     promptEl.textContent = item.word;
-    hintEl.textContent = `읽는 법을 고르세요 (뜻: ${item.meaning})`;
+    hintEl.textContent = "읽는 법을 고르세요";
+    // The meaning used to sit in this hint line, visible before the question was
+    // even read — for a word you half-know that hands over the reading. It's a
+    // hint now, shown only on tap. Unlike the reading peek below it doesn't set
+    // quiz.peeked: the meaning isn't the answer here, so using it is still recall.
+    meaningEl.textContent = "💡 뜻 힌트";
+    meaningEl.hidden = false;
+    meaningEl.onclick = () => {
+      meaningEl.textContent = `뜻: ${item.meaning}`;
+      meaningEl.classList.add("revealed");
+    };
     // Tap the word to see its reading when it's unreadable — better to look it
     // up and learn it than to guess blind. quiz.peeked keeps that honest: see
     // selectAnswer, which won't clear a peeked item from the review queue.

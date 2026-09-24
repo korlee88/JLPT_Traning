@@ -133,6 +133,8 @@ main {
    this can't repeat the .quiz-replay bug where an author `display` beat it. */
 .quiz-reveal { margin: 0 0 8px; color: var(--muted); font-size: 0.9rem; cursor: pointer; }
 .quiz-reveal.revealed { font-size: 1.5rem; color: var(--text); cursor: default; }
+.quiz-meaning { margin: 0 0 8px; color: var(--muted); font-size: 0.9rem; cursor: pointer; }
+.quiz-meaning.revealed { color: var(--text); cursor: default; }
 .quiz-replay { margin: 4px 0 12px; }
 .quiz-replay:not([hidden]) { display: block; }
 .quiz-hint { color: var(--muted); margin: 0 0 12px; }
