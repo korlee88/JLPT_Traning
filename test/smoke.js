@@ -143,6 +143,11 @@ async function main() {
       const stamp = (await page.textContent(".buildstamp")).trim();
       assert(/^build \S+$/.test(stamp), `build marker is visible and stamped (got "${stamp}")`);
 
+      for (const sel of ["#quiz-prompt", "#quiz-reveal", "#quiz-meaning", "#quiz-choices", "#quiz-note"]) {
+        const lang = await page.getAttribute(sel, "lang");
+        assert(lang === "ja", `${sel} is marked lang="ja" so kanji use Japanese glyph shapes (got "${lang}")`);
+      }
+
       const weekTitle = await page.textContent("#week-title");
       assert(weekTitle.startsWith("Week 3"), `week-title reflects the mocked date (got "${weekTitle}")`);
 
@@ -426,6 +431,21 @@ async function main() {
       await page.waitForSelector("#radical-groups .card");
 
       const groups = JSON.parse(fs.readFileSync(path.join(ROOT, "data/n4/radical.json"), "utf8"));
+
+      // A variant radical shows its standalone parent — 礻 (示) — because the bare
+      // codepoint renders from a fallback font on some phones and comes out
+      // looking unlike the same part inside 社. The parent is a common character.
+      const heads = await page.$$eval(".radical-glyph", (els) => els.map((e) => e.textContent.trim()));
+      for (const [rad, g] of Object.entries(groups)) {
+        const want = g.base ? `${rad} (${g.base})` : rad;
+        assert(heads.includes(want), `radical head shows ${g.base ? "the variant with its parent" : "the glyph"} (expected "${want}")`);
+      }
+      // Japanese text is marked lang="ja" so the browser picks Japanese glyph
+      // shapes rather than the page's lang="ko" Korean ones.
+      for (const sel of [".radical-glyph", ".radical-chars", ".radical-words"]) {
+        const tagged = await page.$$eval(sel, (els) => els.every((e) => e.lang === "ja"));
+        assert(tagged, `${sel} is marked lang="ja"`);
+      }
       const expectedGroups = Object.keys(groups).length;
       const expectedChars = Object.values(groups).reduce((n, g) => n + g.chars.length, 0);
       const cards = await page.$$eval("#radical-groups .card", (e) => e.length);

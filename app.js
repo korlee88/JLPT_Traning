@@ -108,7 +108,7 @@ async function renderRadicalTab() {
   const [, xref] = await Promise.all([buildRadicalIndex(), buildXrefIndex()]);
   const groups = new Map();
   for (const [char, g] of _radicalIndex) {
-    if (!groups.has(g.rad)) groups.set(g.rad, { name: g.name, sense: g.sense, chars: [] });
+    if (!groups.has(g.rad)) groups.set(g.rad, { name: g.name, sense: g.sense, base: g.base, chars: [] });
     groups.get(g.rad).chars.push(char);
   }
 
@@ -120,7 +120,13 @@ async function renderRadicalTab() {
     head.className = "radical-head";
     const glyph = document.createElement("span");
     glyph.className = "radical-glyph";
-    glyph.textContent = rad;
+    glyph.lang = "ja";
+    // A variant radical gets its standalone parent beside it: 礻 (示). U+793B and
+    // friends are rare codepoints that some phones render from a fallback font,
+    // so the glyph can come out looking unlike the same part inside 社 — which is
+    // exactly what the owner hit. 示 is a common character every CJK font has, so
+    // it anchors what the radical is even when the variant glyph renders oddly.
+    glyph.textContent = g.base ? `${rad} (${g.base})` : rad;
     const name = document.createElement("span");
     name.className = "radical-name";
     name.textContent = `${g.name} · ${g.sense} · ${g.chars.length}자`;
@@ -128,8 +134,10 @@ async function renderRadicalTab() {
 
     const row = document.createElement("div");
     row.className = "radical-chars";
+    row.lang = "ja";
     const words = document.createElement("p");
     words.className = "radical-words";
+    words.lang = "ja";
     words.hidden = true;
 
     for (const c of g.chars) {
@@ -521,7 +529,7 @@ async function buildRadicalIndex() {
   const index = new Map();
   for (const [rad, g] of Object.entries(groups)) {
     for (const c of g.chars) {
-      index.set(c, { rad, name: g.name, sense: g.sense, siblings: g.chars.filter((x) => x !== c) });
+      index.set(c, { rad, name: g.name, sense: g.sense, base: g.base, siblings: g.chars.filter((x) => x !== c) });
     }
   }
   _radicalIndex = index;

@@ -167,7 +167,7 @@ table#plan-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
 .tab-btn { flex: 1 1 calc(50% - 4px); }
 .radical-intro { color: var(--muted); font-size: 0.85rem; line-height: 1.6; margin: 0; }
 .radical-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
-.radical-glyph { font-size: 2rem; font-weight: 700; line-height: 1; }
+.radical-glyph { font-size: 2rem; font-weight: 700; line-height: 1; white-space: nowrap; }
 .radical-name { color: var(--muted); font-size: 0.85rem; }
 .radical-chars { display: flex; flex-wrap: wrap; gap: 8px; }
 .radical-char {
