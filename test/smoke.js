@@ -19,6 +19,28 @@ function launchOpts() {
   return opts;
 }
 
+// The 같은 글자를 쓰는 다른 단어 lines are derived, not authored, so the test asks the
+// page what it should have produced and checks the note carries exactly that —
+// including the case where the word shares no character and nothing is appended.
+async function assertRelatedLines(page, note, label) {
+  const { word, lines } = await page.evaluate(() => {
+    const w = quiz.pool[quiz.index].word;
+    return { word: w, lines: relatedWordLines(w) };
+  });
+  if (!lines.length) {
+    assert(!/\n[\u4E00-\u9FFF]: /.test(note), `${label}: no related line for ${word}, which shares no character (got "${note}")`);
+    return;
+  }
+  for (const line of lines) {
+    assert(note.includes(line), `${label}: note carries the related-word line for ${word} (expected "${line}" in "${note}")`);
+  }
+  assert(lines.length <= 3, `${label}: related lines are capped at 3 (got ${lines.length} for ${word})`);
+  assert(
+    lines.every((l) => l.split(", ").length <= 2),
+    `${label}: at most 2 words per character (got "${lines.join(" | ")}")`
+  );
+}
+
 function addDaysToDateStr(dateStr, days) {
   const d = new Date(dateStr + "T12:00:00Z"); // noon UTC anchor avoids DST/timezone edge issues
   d.setUTCDate(d.getUTCDate() + days);
@@ -226,6 +248,7 @@ async function main() {
         assert(!(await page.isVisible("#quiz-meaning")), "meaning hint stays hidden outside the kanji quiz (vocab)");
         const note = await page.textContent("#quiz-note");
         assert(note.includes("=") && note.includes("("), `vocab quiz explains word/reading/meaning after answering (got "${note}")`);
+        await assertRelatedLines(page, note, "vocab");
         }
       );
 
@@ -278,6 +301,7 @@ async function main() {
         async () => {
           const note = await page.textContent("#quiz-note");
           assert(note.includes("→") && note.includes("("), `kanji quiz explains word/reading/meaning after answering (got "${note}")`);
+          await assertRelatedLines(page, note, "kanji");
         }
       );
 
