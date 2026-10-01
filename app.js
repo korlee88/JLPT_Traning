@@ -144,7 +144,7 @@ async function renderRadicalTab() {
           return;
         }
         btn.classList.add("open");
-        const found = (xref.get(c) || []).map((o) => `${o.word}(${o.meaning})`);
+        const found = (xref.get(c) || []).map(labelFor);
         words.textContent = found.length ? `${c} — ${found.join(", ")}` : `${c} — 아직 이 글자가 쓰인 단어가 없습니다`;
         words.hidden = false;
       };
@@ -486,7 +486,7 @@ function buildQuizPool(items, wrongKeys, keyField, size) {
 // that can show anything from 54% to 59% for 한자, and 23% to 39% for 단어.
 const XREF_TYPES = ["kanji", "vocab"];
 const XREF_SOURCES = ["kanji", "vocab"];
-let _xrefIndex = null; // char -> [{ word, meaning }], built once per page load
+let _xrefIndex = null; // char -> [{ word, reading, meaning }], built once per page load
 let _radicalIndex = null; // char -> { rad, name, sense, siblings[] }
 
 const CJK = /[\u4E00-\u9FFF]/gu;
@@ -503,7 +503,7 @@ async function buildXrefIndex() {
     seen.add(item.word);
     for (const c of new Set(item.word.match(CJK) || [])) {
       if (!index.has(c)) index.set(c, []);
-      index.get(c).push({ word: item.word, meaning: item.meaning });
+      index.get(c).push({ word: item.word, reading: item.reading, meaning: item.meaning });
     }
   }
   _xrefIndex = index;
@@ -545,7 +545,16 @@ function radicalLines(word) {
   return lines;
 }
 
-// Lines like "社: 会社(회사), 社会(사회)" — the meaning of a character isn't stored
+// "会社(かいしゃ, 회사)" — the reading is in there because the owner is still
+// learning to read these: a bare 会社(회사) is no use if you can't read 会社. A
+// kana-only vocab entry has reading === word, so it shows the word alone rather
+// than repeating itself.
+function labelFor(entry) {
+  const reading = entry.reading && entry.reading !== entry.word ? `${entry.reading}, ` : "";
+  return `${entry.word}(${reading}${entry.meaning})`;
+}
+
+// Lines like "社: 会社(かいしゃ, 회사)" — the meaning of a character isn't stored
 // anywhere, and inventing one would be authoring a dictionary; showing the words it
 // already appears in teaches the same sense by triangulation, from data that's
 // there. Capped so the note stays a note: 3 characters, 2 words each.
@@ -555,7 +564,7 @@ function relatedWordLines(word) {
   for (const c of new Set(word.match(CJK) || [])) {
     const others = (_xrefIndex.get(c) || []).filter((o) => o.word !== word);
     if (!others.length) continue;
-    lines.push(`${c}: ${others.slice(0, 2).map((o) => `${o.word}(${o.meaning})`).join(", ")}`);
+    lines.push(`${c}: ${others.slice(0, 1).map(labelFor).join(", ")}`);
     if (lines.length === 3) break;
   }
   return lines;

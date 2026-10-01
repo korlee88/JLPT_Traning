@@ -43,13 +43,24 @@ async function assertRelatedLines(page, note, label) {
     assert(note.includes(line), `${label}: note carries the related-word line for ${word} (expected "${line}" in "${note}")`);
   }
   assert(lines.length <= 3, `${label}: related lines are capped at 3 (got ${lines.length} for ${word})`);
-  // Count the word(meaning) units, not comma-separated fields: a meaning can
-  // itself contain a comma ("회장, 행사장"), which made the old split-based count
-  // read 会: 会社(회사), 会場(회장, 행사장) as three words.
+  // Count the word(reading, meaning) units, not comma-separated fields: both the
+  // reading and the meaning can contain a comma, so a split-based count read
+  // 会: 会社(かいしゃ, 회사) as several words.
   assert(
-    lines.every((l) => (l.match(/\)(?=,|$)/g) || []).length <= 2),
-    `${label}: at most 2 words per character (got "${lines.join(" | ")}")`
+    lines.every((l) => (l.match(/\)(?=,|$)/g) || []).length <= 1),
+    `${label}: at most 1 word per character now that readings are shown (got "${lines.join(" | ")}")`
   );
+  // The owner can't read all these kanji yet, so a bare 会社(회사) is no help.
+  // A kana-only entry legitimately shows no reading — it would repeat the word.
+  for (const line of lines) {
+    const shownWord = line.slice(line.indexOf(": ") + 2, line.indexOf("("));
+    if (!/[\u4E00-\u9FFF]/.test(shownWord)) continue;
+    const inner = line.slice(line.indexOf("(") + 1, line.lastIndexOf(")"));
+    assert(
+      /[\u3040-\u309F]/.test(inner.split(",")[0]),
+      `${label}: a kanji-written related word carries its reading (got "${line}")`
+    );
+  }
 }
 
 function addDaysToDateStr(dateStr, days) {
@@ -431,6 +442,10 @@ async function main() {
       await page.locator(".radical-char", { hasText: probe }).first().click();
       const shown = (await page.locator(".radical-words:visible").first().textContent()).trim();
       assert(shown.startsWith(`${probe} —`), `tapping ${probe} shows the words it appears in (got "${shown}")`);
+      assert(
+        /\([\u3040-\u309F]/.test(shown),
+        `한자 기초 word list carries readings, not just meanings (got "${shown}")`
+      );
       // Tapping the same chip again closes it.
       await page.locator(".radical-char", { hasText: probe }).first().click();
       assert(
