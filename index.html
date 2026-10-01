@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>JLPT N4 학습 트래커</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%93%9A%3C/text%3E%3C/svg%3E" />
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="style.css?v=dev" />
 </head>
 <body>
   <header class="topbar">
@@ -82,6 +82,11 @@
     </section>
   </main>
 
-  <script src="app.js"></script>
+  <!-- The deploy workflow rewrites every "dev" marker to the commit SHA, so a
+       phone holding a stale app.js is pulled forward as soon as index.html
+       revalidates, and this line says which build is actually running. -->
+  <footer class="buildstamp">build dev</footer>
+
+  <script src="app.js?v=dev"></script>
 </body>
 </html>

@@ -158,3 +158,5 @@ main {
 table#plan-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
 #plan-table th, #plan-table td { text-align: left; padding: 8px 4px; border-bottom: 1px solid var(--border); vertical-align: top; }
 #plan-table th { color: var(--muted); font-weight: 600; }
+
+.buildstamp { text-align: center; color: var(--muted); font-size: 0.72rem; padding: 16px 0 24px; }

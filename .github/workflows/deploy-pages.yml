@@ -22,6 +22,13 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      # Cache-bust: a phone was still running an app.js from several deploys
+      # back. Rewriting the "dev" markers to the commit SHA gives each build its
+      # own asset URL, so a cached index.html is the only thing that can go
+      # stale, and only until it revalidates. Local dev keeps the plain "dev"
+      # marker, so `npm start` and `npm test` are untouched.
+      - name: Stamp the build into asset URLs
+        run: sed -i "s/?v=dev/?v=${GITHUB_SHA::7}/g; s/>build dev</>build ${GITHUB_SHA::7}</g" index.html
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

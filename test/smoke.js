@@ -119,6 +119,19 @@ async function main() {
       await page.goto(URL, { waitUntil: "networkidle" });
       await page.waitForSelector("#week-title");
 
+      // Cache-busting: the deploy workflow rewrites these markers to the commit
+      // SHA. Assert the hooks it edits are present and shaped as it expects, so a
+      // rename here can't silently leave phones pinned to a stale app.js.
+      const assetUrls = await page.$$eval(
+        'script[src], link[rel="stylesheet"]',
+        (els) => els.map((e) => e.getAttribute("src") || e.getAttribute("href"))
+      );
+      for (const u of assetUrls.filter((u) => /^(app\.js|style\.css)/.test(u))) {
+        assert(/\?v=.+$/.test(u), `local asset is version-queried for cache-busting (got "${u}")`);
+      }
+      const stamp = (await page.textContent(".buildstamp")).trim();
+      assert(/^build \S+$/.test(stamp), `build marker is visible and stamped (got "${stamp}")`);
+
       const weekTitle = await page.textContent("#week-title");
       assert(weekTitle.startsWith("Week 3"), `week-title reflects the mocked date (got "${weekTitle}")`);
 
