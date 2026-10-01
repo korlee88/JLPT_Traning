@@ -402,6 +402,45 @@ async function main() {
       await page.close();
     }
 
+    // --- 한자 기초 tab ---
+    // It renders from the same radical.json the note uses, so the test checks
+    // the page against the file rather than against hardcoded counts.
+    {
+      const page = await browser.newPage();
+      const errs = [];
+      page.on("pageerror", (e) => errs.push(e.message));
+      page.on("console", (m) => m.type() === "error" && errs.push(m.text()));
+      await page.goto(URL, { waitUntil: "networkidle" });
+      await page.click('.tab-btn[data-tab="radical"]');
+      await page.waitForSelector("#radical-groups .card");
+
+      const groups = JSON.parse(fs.readFileSync(path.join(ROOT, "data/n4/radical.json"), "utf8"));
+      const expectedGroups = Object.keys(groups).length;
+      const expectedChars = Object.values(groups).reduce((n, g) => n + g.chars.length, 0);
+      const cards = await page.$$eval("#radical-groups .card", (e) => e.length);
+      const chips = await page.$$eval(".radical-char", (e) => e.map((b) => b.textContent));
+      assert(cards === expectedGroups, `한자 기초 renders one card per radical group (got ${cards}, expected ${expectedGroups})`);
+      assert(chips.length === expectedChars, `한자 기초 renders every group member (got ${chips.length}, expected ${expectedChars})`);
+      assert(
+        chips.every((c) => Object.values(groups).some((g) => g.chars.includes(c))),
+        "every chip is a character radical.json actually lists"
+      );
+
+      // Tapping a character shows the words it appears in, from the xref index.
+      const probe = chips.find((c) => c === "港") || chips[0];
+      await page.locator(".radical-char", { hasText: probe }).first().click();
+      const shown = (await page.locator(".radical-words:visible").first().textContent()).trim();
+      assert(shown.startsWith(`${probe} —`), `tapping ${probe} shows the words it appears in (got "${shown}")`);
+      // Tapping the same chip again closes it.
+      await page.locator(".radical-char", { hasText: probe }).first().click();
+      assert(
+        (await page.locator(".radical-words:visible").count()) === 0,
+        "tapping the same character again closes the word list"
+      );
+      assert(errs.length === 0, `한자 기초 tab renders with no console errors (got ${JSON.stringify(errs)})`);
+      await page.close();
+    }
+
     // --- The radical line, on a word chosen to have one ---
     // The round above only sees whatever it draws, and 53% of kanji words have no
     // radical group, so this pins the positive case against the shipped table.

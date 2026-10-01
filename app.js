@@ -90,8 +90,71 @@ function setupTabs() {
       document.querySelectorAll(".tab-panel").forEach((p) => p.classList.remove("active"));
       btn.classList.add("active");
       document.getElementById(`tab-${btn.dataset.tab}`).classList.add("active");
+      if (btn.dataset.tab === "radical") renderRadicalTab();
     });
   });
+}
+
+// ---------- 한자 기초 tab ----------
+// A browsable view of the same radical.json the post-answer note draws on. The
+// note only reaches you mid-quiz and on about half the questions; this is the
+// place to actually sit and look at the groups. Built on first open rather than
+// at startup, so the two index fetches don't delay the 오늘 체크 screen.
+let _radicalTabRendered = false;
+
+async function renderRadicalTab() {
+  if (_radicalTabRendered) return;
+  const container = document.getElementById("radical-groups");
+  const [, xref] = await Promise.all([buildRadicalIndex(), buildXrefIndex()]);
+  const groups = new Map();
+  for (const [char, g] of _radicalIndex) {
+    if (!groups.has(g.rad)) groups.set(g.rad, { name: g.name, sense: g.sense, chars: [] });
+    groups.get(g.rad).chars.push(char);
+  }
+
+  for (const [rad, g] of groups) {
+    const card = document.createElement("div");
+    card.className = "card";
+
+    const head = document.createElement("div");
+    head.className = "radical-head";
+    const glyph = document.createElement("span");
+    glyph.className = "radical-glyph";
+    glyph.textContent = rad;
+    const name = document.createElement("span");
+    name.className = "radical-name";
+    name.textContent = `${g.name} · ${g.sense} · ${g.chars.length}자`;
+    head.append(glyph, name);
+
+    const row = document.createElement("div");
+    row.className = "radical-chars";
+    const words = document.createElement("p");
+    words.className = "radical-words";
+    words.hidden = true;
+
+    for (const c of g.chars) {
+      const btn = document.createElement("button");
+      btn.className = "radical-char";
+      btn.textContent = c;
+      btn.onclick = () => {
+        const wasOpen = btn.classList.contains("open");
+        row.querySelectorAll(".radical-char.open").forEach((b) => b.classList.remove("open"));
+        if (wasOpen) {
+          words.hidden = true;
+          return;
+        }
+        btn.classList.add("open");
+        const found = (xref.get(c) || []).map((o) => `${o.word}(${o.meaning})`);
+        words.textContent = found.length ? `${c} — ${found.join(", ")}` : `${c} — 아직 이 글자가 쓰인 단어가 없습니다`;
+        words.hidden = false;
+      };
+      row.append(btn);
+    }
+
+    card.append(head, row, words);
+    container.append(card);
+  }
+  _radicalTabRendered = true;
 }
 
 // ---------- Today tab ----------
