@@ -435,6 +435,26 @@ async function startQuiz(type) {
   renderQuestion();
 }
 
+// Wires one tap-to-reveal hint line. `penalize` is true only when what's being
+// revealed IS the quiz's own answer — the reading in the 한자 quiz — in which
+// case reading it off isn't recall and selectAnswer keeps the item in the review
+// queue. A hint that isn't the answer is free: the meaning in the 한자 quiz, the
+// reading in the 단어 quiz (which asks for the meaning).
+function wireReveal(el, cue, value, { penalize = false, alsoTap = null } = {}) {
+  el.textContent = cue;
+  el.hidden = false;
+  const reveal = () => {
+    el.textContent = value;
+    el.classList.add("revealed");
+    if (penalize) quiz.peeked = true;
+  };
+  el.onclick = reveal;
+  if (alsoTap) {
+    alsoTap.classList.add("tappable");
+    alsoTap.onclick = reveal;
+  }
+}
+
 function renderQuestion() {
   const item = quiz.pool[quiz.index];
   document.getElementById("quiz-progress").textContent = `${quiz.index + 1} / ${quiz.pool.length}`;
@@ -471,8 +491,15 @@ function renderQuestion() {
     choices = shuffle([item.word, ...pickSpellingDistractors(quiz.allItems, item)]);
     answer = item.word;
   } else if (quiz.type === "vocab") {
-    promptEl.textContent = `${item.word} (${item.reading})`;
+    // The reading used to ride along in the prompt, so the kanji never had to be
+    // read at all. It sits behind a tap now. 19 entries are written in kana only,
+    // where word and reading are the same string — nothing to reveal there, so the
+    // cue line stays off rather than offering a hint that repeats the prompt.
+    promptEl.textContent = item.word;
     hintEl.textContent = "뜻을 고르세요";
+    if (item.reading !== item.word) {
+      wireReveal(revealEl, "글자를 누르면 읽는 법", item.reading, { alsoTap: promptEl });
+    }
     choices = shuffle([item.meaning, ...pickDistractors(quiz.allItems, item.meaning, "meaning")]);
     answer = item.meaning;
   } else if (quiz.type === "kanji") {
@@ -482,25 +509,11 @@ function renderQuestion() {
     // even read — for a word you half-know that hands over the reading. It's a
     // hint now, shown only on tap. Unlike the reading peek below it doesn't set
     // quiz.peeked: the meaning isn't the answer here, so using it is still recall.
-    meaningEl.textContent = "💡 뜻 힌트";
-    meaningEl.hidden = false;
-    meaningEl.onclick = () => {
-      meaningEl.textContent = `뜻: ${item.meaning}`;
-      meaningEl.classList.add("revealed");
-    };
-    // Tap the word to see its reading when it's unreadable — better to look it
-    // up and learn it than to guess blind. quiz.peeked keeps that honest: see
-    // selectAnswer, which won't clear a peeked item from the review queue.
-    revealEl.textContent = "글자를 누르면 읽는 법";
-    revealEl.hidden = false;
-    promptEl.classList.add("tappable");
-    const reveal = () => {
-      revealEl.textContent = item.reading;
-      revealEl.classList.add("revealed");
-      quiz.peeked = true;
-    };
-    promptEl.onclick = reveal;
-    revealEl.onclick = reveal;
+    wireReveal(meaningEl, "💡 뜻 힌트", `뜻: ${item.meaning}`);
+    // Tap the word to see its reading when it's unreadable — better to look it up
+    // and learn it than to guess blind. Penalized, because here the reading is
+    // the answer: selectAnswer won't clear a peeked item from the review queue.
+    wireReveal(revealEl, "글자를 누르면 읽는 법", item.reading, { penalize: true, alsoTap: promptEl });
     choices = shuffle([item.reading, ...pickReadingDistractors(quiz.allItems, item)]);
     answer = item.reading;
   } else if (quiz.type === "grammar") {
