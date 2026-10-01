@@ -203,15 +203,35 @@ async function main() {
         }
       );
 
-      await runQuizRound("#start-vocab", null, async () => {
+      await runQuizRound(
+        "#start-vocab",
+        async () => {
+          // The reading is behind a tap now, so the prompt must be the word alone.
+          const item = await page.evaluate(() => quiz.pool[quiz.index]);
+          const vocabPrompt = (await page.textContent("#quiz-prompt")).trim();
+          assert(vocabPrompt === item.word, `vocab prompt shows the word alone (got "${vocabPrompt}", expected "${item.word}")`);
+          if (item.reading === item.word) {
+            // Kana-only entry: revealing it would just repeat the prompt.
+            assert(!(await page.isVisible("#quiz-reveal")), `no reading cue for the kana-only entry ${item.word}`);
+          } else {
+            const cue = (await page.textContent("#quiz-reveal")).trim();
+            assert(cue === "글자를 누르면 읽는 법", `vocab quiz shows the reading cue before tapping (got "${cue}")`);
+            await page.click("#quiz-prompt");
+            const shown = (await page.textContent("#quiz-reveal")).trim();
+            assert(shown === item.reading, `tapping the vocab word reveals its reading (got "${shown}", expected "${item.reading}")`);
+          }
+        },
+        async () => {
         assert(!(await page.isVisible("#quiz-replay")), "replay button stays hidden outside listening mode (vocab)");
         assert(!(await page.isVisible("#quiz-meaning")), "meaning hint stays hidden outside the kanji quiz (vocab)");
         const note = await page.textContent("#quiz-note");
         assert(note.includes("=") && note.includes("("), `vocab quiz explains word/reading/meaning after answering (got "${note}")`);
-      });
+        }
+      );
 
       assert(!(await checklistChecked(1)), "checklist item 1 starts unchecked before any grammar/reading quiz today");
       await runQuizRound("#start-grammar", null, async () => {
+        assert(!(await page.isVisible("#quiz-reveal")), "reading cue stays hidden in quiz types that don't wire it (grammar)");
         assert(await page.isVisible("#quiz-note"), "grammar quiz shows an explanation note after answering");
       });
       assert(await checklistChecked(1), "completing the grammar quiz auto-checks checklist item 1 (문법·진도 학습)");
@@ -331,6 +351,40 @@ async function main() {
         await page.click("#quiz-next");
       }
       assert(reappeared, `missed item "${missedPrompt}" was prioritized back into the next vocab round`);
+      await page.close();
+    }
+
+    // --- Peeking at a vocab reading does NOT keep it in the review queue ---
+    // The 단어 quiz asks for the meaning, so the reading is a hint rather than the
+    // answer; only the 한자 quiz's peek is penalized.
+    {
+      const page = await browser.newPage();
+      await page.goto(URL, { waitUntil: "networkidle" });
+      await page.evaluate(() => localStorage.clear());
+      await page.reload({ waitUntil: "networkidle" });
+      await page.click('.tab-btn[data-tab="quiz"]');
+      await page.click("#start-vocab");
+      await page.waitForSelector("#quiz-choices .choice-btn");
+
+      // Skip to a question that actually has a reading to reveal.
+      let item = await page.evaluate(() => quiz.pool[quiz.index]);
+      while (item.reading === item.word) {
+        await page.locator("#quiz-choices .choice-btn").first().click();
+        await page.click("#quiz-next");
+        await page.waitForSelector("#quiz-choices .choice-btn");
+        item = await page.evaluate(() => quiz.pool[quiz.index]);
+      }
+      await page.click("#quiz-prompt");
+      // Asserted here as well as in the round above, because which entry the round
+      // draws first is random and may be a kana-only one with no reading to show.
+      const vocabShown = (await page.textContent("#quiz-reveal")).trim();
+      assert(vocabShown === item.reading, `vocab reading reveals on tap (got "${vocabShown}", expected "${item.reading}")`);
+      await page.locator("#quiz-choices .choice-btn", { hasText: item.meaning }).first().click();
+      const vocabQueued = await page.evaluate(() => JSON.parse(localStorage.getItem("jlpt_wrong_items_n4") || "{}").vocab || []);
+      assert(
+        !vocabQueued.includes(item.word),
+        `a peeked vocab reading still counts as recall when answered right (${item.word} not in [${vocabQueued.join(", ")}])`
+      );
       await page.close();
     }
 
