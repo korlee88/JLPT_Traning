@@ -23,10 +23,18 @@ function launchOpts() {
 // page what it should have produced and checks the note carries exactly that —
 // including the case where the word shares no character and nothing is appended.
 async function assertRelatedLines(page, note, label) {
-  const { word, lines } = await page.evaluate(() => {
+  const { word, lines, radLines } = await page.evaluate(() => {
     const w = quiz.pool[quiz.index].word;
-    return { word: w, lines: relatedWordLines(w) };
+    return { word: w, lines: relatedWordLines(w), radLines: radicalLines(w) };
   });
+  // The radical table is hand-verified data, so the test also pins its shape:
+  // every line names a group that exists and lists only that group's members.
+  for (const line of radLines) {
+    assert(note.includes(line), `${label}: note carries the radical line for ${word} (expected "${line}" in "${note}")`);
+  }
+  assert(radLines.length <= 2, `${label}: radical lines are capped at 2 (got ${radLines.length} for ${word})`);
+  const radsSeen = radLines.map((l) => l.split("(")[0]);
+  assert(new Set(radsSeen).size === radsSeen.length, `${label}: radical lines are deduped (got "${radsSeen.join(" ")}" for ${word})`);
   if (!lines.length) {
     assert(!/\n[\u4E00-\u9FFF]: /.test(note), `${label}: no related line for ${word}, which shares no character (got "${note}")`);
     return;
@@ -35,8 +43,11 @@ async function assertRelatedLines(page, note, label) {
     assert(note.includes(line), `${label}: note carries the related-word line for ${word} (expected "${line}" in "${note}")`);
   }
   assert(lines.length <= 3, `${label}: related lines are capped at 3 (got ${lines.length} for ${word})`);
+  // Count the word(meaning) units, not comma-separated fields: a meaning can
+  // itself contain a comma ("회장, 행사장"), which made the old split-based count
+  // read 会: 会社(회사), 会場(회장, 행사장) as three words.
   assert(
-    lines.every((l) => l.split(", ").length <= 2),
+    lines.every((l) => (l.match(/\)(?=,|$)/g) || []).length <= 2),
     `${label}: at most 2 words per character (got "${lines.join(" | ")}")`
   );
 }
@@ -375,6 +386,40 @@ async function main() {
         await page.click("#quiz-next");
       }
       assert(reappeared, `missed item "${missedPrompt}" was prioritized back into the next vocab round`);
+      await page.close();
+    }
+
+    // --- The radical line, on a word chosen to have one ---
+    // The round above only sees whatever it draws, and 53% of kanji words have no
+    // radical group, so this pins the positive case against the shipped table.
+    {
+      const page = await browser.newPage();
+      await page.goto(URL, { waitUntil: "networkidle" });
+      await page.click('.tab-btn[data-tab="quiz"]');
+      await page.click("#start-kanji");
+      await page.waitForSelector("#quiz-choices .choice-btn");
+
+      const probe = await page.evaluate(async () => {
+        const groups = await fetch("data/n4/radical.json").then((r) => r.json());
+        const target = quiz.allItems.find((i) => radicalLines(i.word).length > 0);
+        quiz.pool[quiz.index] = target;
+        renderQuestion();
+        return { groups, word: target.word, reading: target.reading, lines: radicalLines(target.word) };
+      });
+      await page.locator("#quiz-choices .choice-btn", { hasText: probe.reading }).first().click();
+      const radNote = await page.textContent("#quiz-note");
+      for (const line of probe.lines) {
+        assert(radNote.includes(line), `radical line shows for ${probe.word} (expected "${line}" in "${radNote}")`);
+        const rad = line.split("(")[0];
+        const g = probe.groups[rad];
+        assert(g, `radical line names a group that exists in radical.json (got "${rad}")`);
+        const shown = line.split(": ")[1].split(" ");
+        assert(
+          shown.every((c) => g.chars.includes(c) && c !== probe.word),
+          `radical line lists only that group's members (got "${line}")`
+        );
+      }
+      assert(await page.isVisible("#quiz-next"), "the 다음 button stays reachable under the longest note");
       await page.close();
     }
 
