@@ -424,6 +424,7 @@ function buildQuizPool(items, wrongKeys, keyField, size) {
 const XREF_TYPES = ["kanji", "vocab"];
 const XREF_SOURCES = ["kanji", "vocab"];
 let _xrefIndex = null; // char -> [{ word, meaning }], built once per page load
+let _radicalIndex = null; // char -> { rad, name, sense, siblings[] }
 
 const CJK = /[\u4E00-\u9FFF]/gu;
 
@@ -446,6 +447,41 @@ async function buildXrefIndex() {
   return index;
 }
 
+// data/<level>/radical.json is a hand-verified table, not a derived one. The IDS
+// decomposition that powers the cross-reference above cannot give the semantic
+// radical: it recurses into nested parts, so it files 知 under 口 (really 矢), 社
+// under 土 (really 礻) and 館 under 宀 (really 食). Those would teach the wrong
+// thing, so the file only carries groups checked by hand — narrow on purpose.
+async function buildRadicalIndex() {
+  if (_radicalIndex) return _radicalIndex;
+  const groups = await fetch(`data/${CURRENT_LEVEL}/radical.json`).then((r) => r.json());
+  const index = new Map();
+  for (const [rad, g] of Object.entries(groups)) {
+    for (const c of g.chars) {
+      index.set(c, { rad, name: g.name, sense: g.sense, siblings: g.chars.filter((x) => x !== c) });
+    }
+  }
+  _radicalIndex = index;
+  return index;
+}
+
+// Lines like "氵(삼수변·물): 池 泳 海 港" — the category the character belongs to,
+// which is the half of a 形声字 that carries meaning. Deduped by radical, so 洗濯
+// yields one line rather than the same one twice.
+function radicalLines(word) {
+  if (!_radicalIndex) return [];
+  const lines = [];
+  const seen = new Set();
+  for (const c of new Set(word.match(CJK) || [])) {
+    const g = _radicalIndex.get(c);
+    if (!g || seen.has(g.rad) || !g.siblings.length) continue;
+    seen.add(g.rad);
+    lines.push(`${g.rad}(${g.name}, ${g.sense}): ${g.siblings.slice(0, 5).join(" ")}`);
+    if (lines.length === 2) break;
+  }
+  return lines;
+}
+
 // Lines like "社: 会社(회사), 社会(사회)" — the meaning of a character isn't stored
 // anywhere, and inventing one would be authoring a dictionary; showing the words it
 // already appears in teaches the same sense by triangulation, from data that's
@@ -465,7 +501,7 @@ function relatedWordLines(word) {
 async function startQuiz(type) {
   const res = await fetch(`data/${CURRENT_LEVEL}/${type}.json`);
   const items = await res.json();
-  if (XREF_TYPES.includes(type)) await buildXrefIndex();
+  if (XREF_TYPES.includes(type)) await Promise.all([buildXrefIndex(), buildRadicalIndex()]);
   quiz.type = type;
   quiz.allItems = items;
   const keyField = QUIZ_KEY_FIELD[type];
@@ -599,7 +635,9 @@ function renderQuestion() {
 // Only ever appended to the post-answer note. During the question it would hand
 // over the 한자 quiz's answer — 新聞社 beside 会社(회사) gives away しゃ.
 function withRelated(text, word) {
-  const lines = relatedWordLines(word);
+  // Radical first (which category the character is in), then the words that show
+  // that category in use — the general lesson before the instances.
+  const lines = [...radicalLines(word), ...relatedWordLines(word)];
   return lines.length ? `${text}\n${lines.join("\n")}` : text;
 }
 
