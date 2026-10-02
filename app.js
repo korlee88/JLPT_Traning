@@ -593,7 +593,8 @@ function labelFor(entry) {
 // Lines like "社: 会社(かいしゃ, 회사)" — the meaning of a character isn't stored
 // anywhere, and inventing one would be authoring a dictionary; showing the words it
 // already appears in teaches the same sense by triangulation, from data that's
-// there. Capped so the note stays a note: 3 characters, 2 words each.
+// there. Capped so the note stays a note: 3 characters, 1 word each — it was 2
+// until each word started carrying its reading, which roughly doubled line width.
 function relatedWordLines(word) {
   if (!_xrefIndex) return [];
   const lines = [];
