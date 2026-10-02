@@ -38,6 +38,9 @@ const WRONG_ITEMS_KEY = `jlpt_wrong_items_${CURRENT_LEVEL}`;
 // A round is still capped at the number of entries the data file actually has.
 const DEFAULT_ROUND_SIZE = 10;
 const QUIZ_ROUND_SIZE = { hiragana: 20, katakana: 20, kanji: 20 };
+// How much of a round the review queue may take (see buildQuizPool). Half
+// keeps missed items coming back often without crowding out new material.
+const REVIEW_SHARE = 0.5;
 
 function todayStr(d = new Date()) {
   const y = d.getFullYear();
@@ -256,7 +259,18 @@ function renderPlanTable(plan) {
 }
 
 // ---------- Quiz tab ----------
-const quiz = { type: null, pool: [], index: 0, score: 0, allItems: [] };
+// Replays per listening question. The exam plays each clip once; unlimited
+// replays here turned 청해 into a transcription exercise you could grind at.
+const MAX_REPLAYS = 1;
+const quiz = { type: null, pool: [], index: 0, score: 0, allItems: [], replays: 0 };
+
+// Repaints the 다시 듣기 button for the replays left on the current question.
+function renderReplayButton() {
+  const btn = document.getElementById("quiz-replay");
+  const left = MAX_REPLAYS - quiz.replays;
+  btn.disabled = left <= 0;
+  btn.textContent = left > 0 ? `🔊 다시 듣기 (${left}회)` : "🔊 다시 듣기 (0회)";
+}
 
 function setupQuiz() {
   document.getElementById("start-hiragana").addEventListener("click", () => startQuiz("hiragana"));
@@ -270,7 +284,10 @@ function setupQuiz() {
   document.getElementById("quiz-next").addEventListener("click", nextQuestion);
   document.getElementById("quiz-replay").addEventListener("click", () => {
     const item = quiz.pool[quiz.index];
-    if (item && item.script) speak(item.script);
+    if (!item || !item.script || quiz.replays >= MAX_REPLAYS) return;
+    quiz.replays += 1;
+    speak(item.script);
+    renderReplayButton();
   });
   document.getElementById("quiz-retry").addEventListener("click", () => {
     document.getElementById("quiz-result").hidden = true;
@@ -280,11 +297,17 @@ function setupQuiz() {
   renderQuizStartStatus();
 }
 
+// Above the default 1.0: real 청해 audio runs at natural conversational speed,
+// and the default TTS rate is slower than that, so the quiz was easier than the
+// exam. 1.15 is faster without blurring — the transcript is in the note either way.
+const SPEECH_RATE = 1.15;
+
 function speak(text) {
   if (!("speechSynthesis" in window)) return;
   window.speechSynthesis.cancel();
   const utter = new SpeechSynthesisUtterance(text);
   utter.lang = "ja-JP";
+  utter.rate = SPEECH_RATE;
   window.speechSynthesis.speak(utter);
 }
 
@@ -476,15 +499,20 @@ function recordAnswerOutcome(type, itemKey, correct) {
   saveWrongItems(data);
 }
 
-// Fills a quiz round by putting every currently-wrong item first (shuffled),
-// then topping up with fresh items so previously-missed questions keep
-// coming back until mastered, without the round being *only* review items.
+// Fills a quiz round by mixing review items with fresh ones. Wrong items keep
+// coming back until mastered, but only up to REVIEW_SHARE of the round: the
+// first version took `size` of them, so once the queue held a full round's
+// worth, every round was 100% review and a word added today could not come up
+// until every earlier mistake was cleared. Whichever side runs out, the other
+// tops the round back up, so the round is never short when the file can fill it.
 function buildQuizPool(items, wrongKeys, keyField, size) {
   if (!keyField || wrongKeys.length === 0) return shuffle(items).slice(0, size);
-  const wrongItems = items.filter((v) => wrongKeys.includes(v[keyField]));
-  const otherItems = items.filter((v) => !wrongKeys.includes(v[keyField]));
-  const pool = shuffle(wrongItems).slice(0, size);
-  if (pool.length < size) pool.push(...shuffle(otherItems).slice(0, size - pool.length));
+  const wrongItems = shuffle(items.filter((v) => wrongKeys.includes(v[keyField])));
+  const otherItems = shuffle(items.filter((v) => !wrongKeys.includes(v[keyField])));
+  const reviewCap = Math.max(1, Math.round(size * REVIEW_SHARE));
+  const pool = wrongItems.slice(0, reviewCap);
+  pool.push(...otherItems.slice(0, size - pool.length));
+  if (pool.length < size) pool.push(...wrongItems.slice(reviewCap, reviewCap + size - pool.length));
   return shuffle(pool);
 }
 
@@ -637,7 +665,9 @@ function renderQuestion() {
   meaningEl.classList.remove("revealed");
   meaningEl.onclick = null;
   quiz.peeked = false;
+  quiz.replays = 0;
   replayBtn.hidden = true;
+  renderReplayButton();
   let choices, answer;
 
   if (quiz.type === "hiragana" || quiz.type === "katakana") {
@@ -692,9 +722,15 @@ function renderQuestion() {
   } else {
     // listening
     promptEl.textContent = "🔊 음성을 듣고 뜻을 고르세요";
-    hintEl.textContent = "";
+    hintEl.textContent = `다시 듣기 ${MAX_REPLAYS}회까지`;
     replayBtn.hidden = false;
-    choices = shuffle([item.meaning, ...pickDistractors(quiz.allItems, item.meaning, "meaning")]);
+    // Authored near-miss distractors where the entry has them: a random meaning
+    // from another sentence is eliminated by one caught word, so the question
+    // tested nothing past that. item.choices differ by a single detail — a time,
+    // a day, a direction, who is doing it — so the whole sentence has to land.
+    const listeningDistractors =
+      item.choices || pickDistractors(quiz.allItems, item.meaning, "meaning");
+    choices = shuffle([item.meaning, ...listeningDistractors]);
     answer = item.meaning;
     speak(item.script);
   }

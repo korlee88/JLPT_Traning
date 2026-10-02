@@ -137,6 +137,9 @@ main {
 .quiz-meaning.revealed { color: var(--text); cursor: default; }
 .quiz-replay { margin: 4px 0 12px; }
 .quiz-replay:not([hidden]) { display: block; }
+/* Spent, not gone: the button stays put so the layout doesn't jump mid-question
+   and the "(0회)" label says why it stopped working. */
+.quiz-replay:disabled { background: var(--border); color: var(--muted); cursor: default; }
 .quiz-hint { color: var(--muted); margin: 0 0 12px; }
 .quiz-choices { display: grid; gap: 8px; }
 .choice-btn {
