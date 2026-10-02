@@ -362,6 +362,28 @@ async function main() {
         "#start-listening",
         async () => {
           assert(await page.isVisible("#quiz-replay"), "listening quiz shows a replay button");
+          // The three distractors are authored per entry (a changed time, day,
+          // direction or actor), not drawn from other entries at random, so the
+          // rendered set must be exactly that entry's own meaning + choices.
+          const { expected, shown } = await page.evaluate(() => ({
+            expected: [quiz.pool[quiz.index].meaning, ...quiz.pool[quiz.index].choices],
+            shown: [...document.querySelectorAll("#quiz-choices .choice-btn")].map((b) => b.textContent),
+          }));
+          assert(
+            expected.length === 4 && shown.length === 4 &&
+              [...expected].sort().join("|") === [...shown].sort().join("|"),
+            `listening choices are the entry's own near-misses (shown [${shown.join(", ")}])`
+          );
+          // One replay, like the exam. The button stays in place and says so.
+          await page.click("#quiz-replay");
+          assert(
+            await page.locator("#quiz-replay").isDisabled(),
+            "the 다시 듣기 button is spent after one replay"
+          );
+          assert(
+            (await page.textContent("#quiz-replay")).includes("0회"),
+            `the spent replay button says how many are left (got "${await page.textContent("#quiz-replay")}")`
+          );
         },
         async () => {
           const listeningNote = await page.textContent("#quiz-note");
@@ -395,26 +417,36 @@ async function main() {
       await page.click("#start-vocab");
       await page.waitForSelector("#quiz-choices .choice-btn");
 
-      let missedPrompt = null;
+      const missed = [];
       for (let i = 0; i < 10; i++) {
         await page.waitForSelector("#quiz-choices .choice-btn");
         const prompt = await page.textContent("#quiz-prompt");
         await page.locator("#quiz-choices .choice-btn").first().click();
-        if (!missedPrompt && (await page.locator(".choice-btn.wrong").count()) > 0) missedPrompt = prompt;
+        if ((await page.locator(".choice-btn.wrong").count()) > 0) missed.push(prompt);
         await page.click("#quiz-next");
       }
-      assert(missedPrompt, "at least one vocab question was answered wrong in this round (expected virtually always with random clicks)");
+      assert(missed.length, "at least one vocab question was answered wrong in this round (expected virtually always with random clicks)");
 
       await page.click("#quiz-retry");
       await page.click("#start-vocab");
-      let reappeared = false;
+      const seen = [];
       for (let i = 0; i < 10; i++) {
         await page.waitForSelector("#quiz-choices .choice-btn");
-        if ((await page.textContent("#quiz-prompt")) === missedPrompt) reappeared = true;
+        seen.push(await page.textContent("#quiz-prompt"));
         await page.locator("#quiz-choices .choice-btn").first().click();
         await page.click("#quiz-next");
       }
-      assert(reappeared, `missed item "${missedPrompt}" was prioritized back into the next vocab round`);
+      // Review items are prioritized, but only up to REVIEW_SHARE of the round —
+      // asserting one *specific* missed word comes back would be flaky now that
+      // random clicking misses more than the cap. The count is exact: fresh items
+      // are by definition not in the wrong set, so nothing else can inflate it.
+      const cap = await page.evaluate(() => Math.max(1, Math.round(10 * REVIEW_SHARE)));
+      const reappeared = seen.filter((w) => missed.includes(w)).length;
+      assert(
+        reappeared === Math.min(missed.length, cap),
+        `missed items are prioritized back into the next vocab round, up to the ${cap}-item review cap ` +
+          `(missed ${missed.length}, ${reappeared} came back)`
+      );
       await page.close();
     }
 
@@ -563,6 +595,47 @@ async function main() {
       assert(
         queued.includes(peeked.word),
         `a peeked kanji stays in the review queue even when answered right (${peeked.word} in [${queued.join(", ")}])`
+      );
+      await page.close();
+    }
+
+    // --- A round is at most half review, so new words still come up ---
+    {
+      const page = await browser.newPage();
+      await page.goto(URL, { waitUntil: "networkidle" });
+      const pools = await page.evaluate(() => {
+        const items = Array.from({ length: 40 }, (_, i) => ({ word: `w${i}` }));
+        // A queue twice the size of a round — the case that used to make every
+        // round 100% review, so a word added today could never be drawn.
+        const wrong = items.slice(0, 20).map((v) => v.word);
+        const run = (wrongKeys, size, pickFrom = items) =>
+          buildQuizPool(pickFrom, wrongKeys, "word", size);
+        return {
+          share: REVIEW_SHARE,
+          bigQueue: run(wrong, 10).map((v) => v.word),
+          // Nothing fresh left to pull: review spills past the cap rather than
+          // leaving the round short.
+          nothingFresh: run(wrong.slice(0, 8), 8, items.slice(0, 8)).map((v) => v.word),
+          wrong,
+        };
+      });
+      const cap = Math.max(1, Math.round(10 * pools.share));
+      const reviewed = pools.bigQueue.filter((w) => pools.wrong.includes(w)).length;
+      assert(
+        pools.bigQueue.length === 10,
+        `a round stays full with an oversized review queue (got ${pools.bigQueue.length})`
+      );
+      assert(
+        reviewed === cap,
+        `at most half a round is review, so today's new words still come up (got ${reviewed} of 10, cap ${cap})`
+      );
+      assert(
+        new Set(pools.bigQueue).size === 10,
+        "a round never repeats an item"
+      );
+      assert(
+        pools.nothingFresh.length === 8 && new Set(pools.nothingFresh).size === 8,
+        `with no fresh items left the round fills from review instead of running short (got ${pools.nothingFresh.length})`
       );
       await page.close();
     }
