@@ -142,6 +142,10 @@ main {
 /* Spent, not gone: the button stays put so the layout doesn't jump mid-question
    and the "(0회)" label says why it stopped working. */
 .replay-btn:disabled { background: var(--border); color: var(--muted); cursor: default; }
+/* scrollIntoView (see selectAnswer) aligns flush with the viewport edge, which
+   leaves the 다음 button jammed against the bottom of a phone screen. This keeps
+   a gap below it — scroll-margin is exactly what scrollIntoView honours. */
+#quiz-next { scroll-margin-bottom: 24px; }
 .quiz-hint { color: var(--muted); margin: 0 0 12px; }
 .quiz-choices { display: grid; gap: 8px; }
 .choice-btn {

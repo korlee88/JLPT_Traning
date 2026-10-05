@@ -9,6 +9,8 @@ const path = require("path");
 const fs = require("fs");
 
 const PORT = 8123;
+// The owner studies off a phone; every layout budget in CLAUDE.md is measured here.
+const PHONE = { width: 390, height: 844 };
 const URL = `http://localhost:${PORT}`;
 const ROOT = path.join(__dirname, "..");
 const CLOUD_CHROMIUM = "/opt/pw-browsers/chromium"; // stable path in Claude Code cloud sessions
@@ -17,6 +19,18 @@ function launchOpts() {
   const opts = { args: ["--no-sandbox"] };
   if (fs.existsSync(CLOUD_CHROMIUM)) opts.executablePath = CLOUD_CHROMIUM;
   return opts;
+}
+
+// Whether the 다음 button is actually within the viewport, not merely rendered.
+// page.isVisible() only means "not display:none", so it says nothing about the
+// fold — and on a phone a button below the fold after every question is exactly
+// what the note-length budget exists to prevent. selectAnswer scrolls it into
+// view, so this is what proves that works.
+async function nextButtonOnScreen(page) {
+  const box = await page.locator("#quiz-next").boundingBox();
+  if (!box) return false;
+  const h = page.viewportSize().height;
+  return box.y >= 0 && box.y + box.height <= h;
 }
 
 // The 같은 글자를 쓰는 다른 단어 lines are derived, not authored, so the test asks the
@@ -174,9 +188,9 @@ async function main() {
       // quiz list screen via "쪽지시험 목록으로", and checks that button now shows
       // today's completion badge.
       // Questions expected per round, mirroring QUIZ_ROUND_SIZE/DEFAULT_ROUND_SIZE
-      // in app.js. 독해 is 8 rather than 10 because reading.json only has 8
-      // entries and a round is capped at the data file's size — if that file
-      // grows past 10, this expectation moves to 10.
+      // in app.js. A round is also capped at the data file's size, which is what
+      // used to hold 독해 to 8; reading.json passed 10 entries on 2026-10-05, so
+      // every type now runs its full configured length.
       const EXPECTED_ROUND_SIZE = {
         "#start-hiragana": 20,
         "#start-katakana": 20,
@@ -184,7 +198,7 @@ async function main() {
         "#start-kanji": 20,
         "#start-vocab": 10,
         "#start-grammar": 10,
-        "#start-reading": 8,
+        "#start-reading": 10,
         "#start-listening": 10,
       };
 
@@ -589,7 +603,10 @@ async function main() {
     // The round above only sees whatever it draws, and 53% of kanji words have no
     // radical group, so this pins the positive case against the shipped table.
     {
-      const page = await browser.newPage();
+      // 390x844 on purpose: every note-length budget in CLAUDE.md was measured at
+      // phone size, and the default 1280x720 wraps so little that the height
+      // assertion below would pass whatever the note said.
+      const page = await browser.newPage({ viewport: PHONE });
       await page.goto(URL, { waitUntil: "networkidle" });
       await page.click('.tab-btn[data-tab="quiz"]');
       await page.click("#start-kanji");
@@ -615,7 +632,7 @@ async function main() {
           `radical line lists only that group's members (got "${line}")`
         );
       }
-      assert(await page.isVisible("#quiz-next"), "the 다음 button stays reachable under the longest note");
+      assert(await nextButtonOnScreen(page), "the 다음 button stays reachable under the longest note");
       await page.close();
     }
 
@@ -672,6 +689,43 @@ async function main() {
       assert(
         queued.includes(peeked.word),
         `a peeked kanji stays in the review queue even when answered right (${peeked.word} in [${queued.join(", ")}])`
+      );
+      await page.close();
+    }
+
+    // --- Every 독해 entry leaves the 다음 button on screen ---
+    // Adding 33 passages took reading.json from 8 entries to 41 and the longest
+    // passage from 58 to 107 characters; before selectAnswer scrolled the button
+    // into view, 23 of the 41 pushed it past the fold at phone size. A round only
+    // draws 10, so this walks the whole file rather than trusting the draw.
+    {
+      const page = await browser.newPage({ viewport: PHONE });
+      await page.goto(URL, { waitUntil: "networkidle" });
+      await page.click('.tab-btn[data-tab="quiz"]');
+      await page.click("#start-reading");
+      await page.waitForSelector("#quiz-choices .choice-btn");
+      const total = await page.evaluate(async () => {
+        const all = await fetch("data/n4/reading.json").then((r) => r.json());
+        quiz.pool = all;
+        quiz.index = 0;
+        renderQuestion();
+        return all.length;
+      });
+      assert(total >= 10, `reading.json has enough entries to fill a round (got ${total})`);
+      const offScreen = [];
+      for (let i = 0; i < total; i++) {
+        await page.waitForSelector("#quiz-choices .choice-btn");
+        const answer = await page.evaluate(() => quiz.pool[quiz.index].answer);
+        await page.locator("#quiz-choices .choice-btn", { hasText: answer }).first().click();
+        if (!(await nextButtonOnScreen(page))) {
+          offScreen.push(await page.evaluate(() => quiz.pool[quiz.index].passage.slice(0, 20)));
+        }
+        await page.click("#quiz-next");
+      }
+      assert(
+        offScreen.length === 0,
+        `all ${total} 독해 entries leave 다음 on screen at ${PHONE.width}x${PHONE.height}` +
+          (offScreen.length ? ` (${offScreen.length} did not: ${offScreen.join(" | ")})` : "")
       );
       await page.close();
     }
