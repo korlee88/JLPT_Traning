@@ -42,6 +42,7 @@ Deploy is automatic: push to `main` → `.github/workflows/deploy-pages.yml` →
 ```
 plan.json       { startDate, examDate, textbook, weeks: [{ week, start, end, focus }] }
 hiragana.json   [{ char, hangul }]                      quiz asks for the Korean reading
+                                                          (46 base + 20 탁음 + 5 반탁음 = 71)
 katakana.json   [{ char, hangul }]                      same shape as hiragana.json
 loanword.json   [{ word, meaning }]                     katakana 외래어; quiz gives the Korean
                                                           meaning and asks for the spelling
@@ -57,7 +58,7 @@ radical.json    { "<부수>": { name, sense, chars: [..] } }  hand-verified 부�
 
 **Every quiz type shows an explanation after answering** (right or wrong), via `explanationFor()` in `app.js` — not just a red/green highlight. For `grammar`/`reading` this is the data's own `note` field. Write one for every new entry, and make it earn its place: quote the exact sentence/clause that decides the answer, say *why* that leads to the correct choice, and account for the wrong choices — a superseded detail (the pre-change time/floor in the 会議 passage), a statement the text contradicts, or simply "not mentioned in the passage at all". `reading.json`'s notes were rewritten to that bar in #9 because a bare sentence pointer was too thin to learn from; match them rather than regressing. The other types don't need authored notes; `explanationFor()` builds the recap straight from the entry's own fields (e.g. `word (reading) = meaning`).
 
-`hiragana`/`katakana` cover only the base 46-character gojuon table each (no dakuten/handakuten or combination sounds yet) — extend them the same way if that's ever wanted.
+`hiragana`/`katakana` carry **71 characters each**: the 46-character gojuon base, the 20 탁음 (が/ざ/だ/ば행) and the 5 반탁음 (ぱ행), added 2026-10-05 when the owner asked for "그 땡땡 두개 넣으면 발음이 달라지는것". ぱ행 came along with them — its mark is a circle rather than two dots, but it is the same section of any kana chart and leaving it out would only mean coming back for it. **요음 (きゃ/しゅ/ちょ…) are still not in**; extend the same way if that's ever wanted. 탁음/반탁음 have no 어두/어중 split in the 표기법, so each has one form.
 
 `hangul` uses the **어중·어말 (aspirated) form** from 국립국어원's 외래어 표기법: か→카, た→타, ち→치, て→테, と→토. `つ`→쓰 is unchanged because the 표기법 gives it 쓰 in both positions. **Don't "correct" these back to the 어두 forms (가/다/지/데/도)** — the owner raised this on 2026-09-17 and the switch was deliberate:
 
@@ -65,7 +66,9 @@ radical.json    { "<부수>": { name, sense, chars: [..] } }  hand-verified 부�
 - Japanese word-initial voiceless stops sit *between* Korean 예사소리 and 거센소리, which is why perception splits; the 1986 committee judged them closer to 예사소리, and that call is still disputed.
 - Decisively: the 어두 form collides with dakuten. か=가 *and* が=가, た=다 *and* だ=다, ち=지 *and* ぢ=지 — so the quiz would become unanswerable the moment が행 is added. The aspirated form keeps each pair distinct (か=카 vs が=가).
 
-Two characters legitimately share a hangul value: お and を are both 오, because を really is pronounced /o/ in modern Japanese. That's not a bug to fix — but note `pickDistractors` doesn't dedupe, so if a future row ever duplicates a hangul value, the kana quiz can show the same choice twice (the kanji quiz's `pickReadingDistractors` already guards against this).
+**That last point stopped being hypothetical on 2026-10-05**, when 탁음/반탁음 went in. Every 청음/탁음/반탁음 pair now in the data reads differently (か카/が가, た타/だ다, ち치/ぢ지, つ쓰/づ즈, て테/で데, と토/ど도, は하/ば바/ぱ파), so every question stays answerable. `test/smoke.js` asserts that pair by pair against both files — reverting any of these to its 어두 form now breaks a test instead of silently breaking the quiz.
+
+**Three pairs legitimately share a hangul value**, and must not be "fixed": お/を are both 오 (を really is /o/ in modern Japanese), and じ/ぢ are both 지 and ず/づ both 즈 — the 四つ仮名, genuine homophones in standard modern Japanese, which is exactly why the 표기법 gives them one spelling each. What this *did* require is the dedupe `pickDistractors` previously lacked: it filtered distractors against the answer's value but not against each other, so a round could render 지 twice. It now dedupes by value, the way `pickReadingDistractors` already did. A smoke test drives a whole kana round and asserts all four choices are distinct on every question.
 
 ん is shown as 응, a teaching convention for the isolated mora — the official rule (always ㄴ batchim) only applies to ん attached to a word.
 
@@ -114,6 +117,12 @@ The 단어 quiz got the same line on 2026-10-01 — the owner wants to read the 
 - **14 → 40 entries**, so a round of 10 repeats less and the review cap above has fresh material to draw on.
 - **One replay** (`MAX_REPLAYS`). Unlimited replays made it a transcription exercise you could grind at; the exam plays each clip once. The button stays visible and disabled, labelled `(0회)`, so the layout doesn't jump and the reason is on screen. `quiz.replays` resets in `renderQuestion` like `quiz.peeked`.
 - **`SPEECH_RATE = 1.15`** on the utterance. The default 1.0 is slower than natural conversational speed, which is what the exam uses.
+
+**Two speeds, and the cap lifts once you've answered** (2026-10-05, both asked for by the owner). `speak(text, rate)` takes a rate; `replaysLeft(speed)` / `renderReplayButtons()` / `playCurrentScript(speed)` in `app.js` are the three places this lives.
+
+- **`🐢 천천히` at `SLOW_SPEECH_RATE = 0.7`**, with its **own** budget of `MAX_REPLAYS` rather than sharing the normal one. They test different things: a second pass at full speed is another go at the same attempt, while a slow pass is for a sentence you couldn't segment at speed. Slow enough to separate the moras, not so slow the pitch accent falls apart.
+- **After answering, both are unlimited.** `quiz.answered` is set in `selectAnswer`, and the buttons drop their `(n회)` label. The cap exists to stop the *question* becoming a transcription exercise; once the answer and the transcript are both on screen there is nothing left to grind, and replaying while reading the script is the most useful moment in the whole question. Don't reinstate a post-answer limit.
+- Both buttons live in `#quiz-replays`, a flex row. Its `display` sits behind `:not([hidden])` for the same reason `.quiz-replay` did — a bare `display` beats the browser's `[hidden]{display:none}` and the row would show on every quiz type (the original `.quiz-replay` bug). Verified at 390×844: the two buttons fit on one line and 다음 stays reachable.
 
 Invariants `listening.json` must keep (checked when the file is edited, and partly by `test/smoke.js`, which asserts the rendered four are exactly one entry's `meaning` + `choices`): exactly 3 distractors per entry, the answer not among them, no duplicate distractors within an entry, no distractor equal to *another* entry's meaning (that would make two questions share a correct-looking option), and no duplicate `script`/`meaning` across entries — `script` is the wrong-answer queue's key.
 

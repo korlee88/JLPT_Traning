@@ -238,6 +238,55 @@ async function main() {
 
       await runQuizRound("#start-katakana");
 
+      // --- 탁음/반탁음 are in both kana tables, and no 한글 value collides with
+      // its own 청음. The aspirated reading (か=카, not 가) exists precisely so
+      // が=가 stays answerable; a regression there makes the quiz unwinnable.
+      for (const kind of ["hiragana", "katakana"]) {
+        const rows = await page.evaluate(
+          (k) => fetch(`data/n4/${k}.json`).then((r) => r.json()),
+          kind
+        );
+        const map = new Map(rows.map((e) => [e.char, e.hangul]));
+        // 46 base + 20 탁음 + 5 반탁음
+        assert(rows.length === 71, `${kind}.json carries the base table plus 탁음/반탁음 (got ${rows.length})`);
+        const kana = kind === "hiragana" ? (c) => c : (c) => String.fromCodePoint(c.codePointAt(0) + 0x60);
+        for (const [plain, voiced] of [
+          ["か", "が"], ["さ", "ざ"], ["た", "だ"], ["は", "ば"], ["は", "ぱ"], ["ば", "ぱ"],
+          ["ち", "ぢ"], ["つ", "づ"], ["て", "で"], ["と", "ど"], ["き", "ぎ"], ["し", "じ"],
+        ]) {
+          const [a, b] = [kana(plain), kana(voiced)];
+          assert(map.has(a) && map.has(b), `${kind}: both ${a} and ${b} are in the table`);
+          assert(
+            map.get(a) !== map.get(b),
+            `${kind}: ${a} and ${b} must not share a 한글 reading (both ${map.get(a)})`
+          );
+        }
+        // じ/ぢ and ず/づ do share one — they're homophones. That's allowed, but
+        // pickDistractors must dedupe or a round can show the same choice twice.
+        const dupes = [...new Set(rows.map((e) => e.hangul))].length;
+        assert(dupes < rows.length, `${kind}: homophone readings exist, so the dedupe below matters`);
+      }
+
+      {
+        // Drive a full kana round and check every question's four choices are
+        // distinct — the case that breaks is じ and ぢ both rendering as 지.
+        await page.click("#start-hiragana");
+        for (let i = 0; i < 20; i++) {
+          await page.waitForSelector("#quiz-choices .choice-btn");
+          const shown = await page.evaluate(() =>
+            [...document.querySelectorAll("#quiz-choices .choice-btn")].map((b) => b.textContent)
+          );
+          const prompt = await page.textContent("#quiz-prompt");
+          assert(
+            shown.length === 4 && new Set(shown).size === 4,
+            `kana round never repeats a choice (${prompt} showed [${shown.join(", ")}])`
+          );
+          await page.locator("#quiz-choices .choice-btn").first().click();
+          await page.click("#quiz-next");
+        }
+        await page.click("#quiz-retry");
+      }
+
       await runQuizRound(
         "#start-loanword",
         async () => {
@@ -374,15 +423,26 @@ async function main() {
               [...expected].sort().join("|") === [...shown].sort().join("|"),
             `listening choices are the entry's own near-misses (shown [${shown.join(", ")}])`
           );
-          // One replay, like the exam. The button stays in place and says so.
-          await page.click("#quiz-replay");
           assert(
-            await page.locator("#quiz-replay").isDisabled(),
-            "the 다시 듣기 button is spent after one replay"
+            await page.isVisible("#quiz-replay-slow"),
+            "listening quiz offers a 천천히 듣기 button beside the normal one"
           );
+          // One replay each, like the exam. Each button stays in place and says so.
+          for (const id of ["#quiz-replay", "#quiz-replay-slow"]) {
+            assert(!(await page.locator(id).isDisabled()), `${id} starts available`);
+            await page.click(id);
+            assert(await page.locator(id).isDisabled(), `${id} is spent after one replay`);
+            assert(
+              (await page.textContent(id)).includes("0회"),
+              `${id} says how many replays are left (got "${await page.textContent(id)}")`
+            );
+          }
+          // Separate budgets: spending the normal replay can't have spent the slow
+          // one, which the loop above already proved by clicking it afterwards.
+          const slowRate = await page.evaluate(() => [SLOW_SPEECH_RATE, SPEECH_RATE]);
           assert(
-            (await page.textContent("#quiz-replay")).includes("0회"),
-            `the spent replay button says how many are left (got "${await page.textContent("#quiz-replay")}")`
+            slowRate[0] < slowRate[1],
+            `the 천천히 pass is slower than the normal one (got ${slowRate[0]} vs ${slowRate[1]})`
           );
         },
         async () => {
@@ -390,6 +450,23 @@ async function main() {
           assert(
             listeningNote.includes("스크립트:") && listeningNote.includes("뜻:"),
             `listening quiz reveals both script and meaning after answering (got "${listeningNote}")`
+          );
+          // Both buttons come back once the answer is in: the transcript is on
+          // screen, so there's nothing left to grind and replaying is pure study.
+          for (const id of ["#quiz-replay", "#quiz-replay-slow"]) {
+            assert(
+              !(await page.locator(id).isDisabled()),
+              `${id} is usable again after answering, even though it was spent`
+            );
+            assert(
+              !(await page.textContent(id)).includes("회)"),
+              `${id} drops the remaining-count label after answering (got "${await page.textContent(id)}")`
+            );
+          }
+          await page.click("#quiz-replay-slow");
+          assert(
+            !(await page.locator("#quiz-replay-slow").isDisabled()),
+            "post-answer replays are unlimited, so the button stays usable"
           );
         }
       );
