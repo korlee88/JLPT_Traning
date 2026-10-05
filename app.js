@@ -262,14 +262,46 @@ function renderPlanTable(plan) {
 // Replays per listening question. The exam plays each clip once; unlimited
 // replays here turned 청해 into a transcription exercise you could grind at.
 const MAX_REPLAYS = 1;
-const quiz = { type: null, pool: [], index: 0, score: 0, allItems: [], replays: 0 };
+const quiz = {
+  type: null, pool: [], index: 0, score: 0, allItems: [],
+  replays: 0, slowReplays: 0, answered: false,
+};
 
-// Repaints the 다시 듣기 button for the replays left on the current question.
-function renderReplayButton() {
-  const btn = document.getElementById("quiz-replay");
-  const left = MAX_REPLAYS - quiz.replays;
-  btn.disabled = left <= 0;
-  btn.textContent = left > 0 ? `🔊 다시 듣기 (${left}회)` : "🔊 다시 듣기 (0회)";
+// Replays left at `speed` on the current question. The slow pass keeps its own
+// budget because it tests a different thing — parsing a sentence you couldn't
+// catch at speed is still listening, where a second pass at full speed is just
+// another go at the same attempt.
+//
+// After answering both are unlimited. The cap exists to stop the question
+// becoming a transcription exercise you can grind at; once the answer and the
+// transcript are both on screen there is nothing left to grind, and replaying
+// while reading the script is the most useful moment in the whole question.
+function replaysLeft(speed) {
+  if (quiz.answered) return Infinity;
+  return MAX_REPLAYS - (speed === "slow" ? quiz.slowReplays : quiz.replays);
+}
+
+// Repaints both 다시 듣기 buttons for what's left on the current question.
+function renderReplayButtons() {
+  const normal = document.getElementById("quiz-replay");
+  const slow = document.getElementById("quiz-replay-slow");
+  const n = replaysLeft("normal");
+  const sl = replaysLeft("slow");
+  normal.disabled = n <= 0;
+  slow.disabled = sl <= 0;
+  normal.textContent = quiz.answered ? "🔊 다시 듣기" : `🔊 다시 듣기 (${n}회)`;
+  slow.textContent = quiz.answered ? "🐢 천천히 듣기" : `🐢 천천히 (${sl}회)`;
+}
+
+function playCurrentScript(speed) {
+  const item = quiz.pool[quiz.index];
+  if (!item || !item.script || replaysLeft(speed) <= 0) return;
+  if (!quiz.answered) {
+    if (speed === "slow") quiz.slowReplays += 1;
+    else quiz.replays += 1;
+  }
+  speak(item.script, speed === "slow" ? SLOW_SPEECH_RATE : SPEECH_RATE);
+  renderReplayButtons();
 }
 
 function setupQuiz() {
@@ -282,13 +314,8 @@ function setupQuiz() {
   document.getElementById("start-reading").addEventListener("click", () => startQuiz("reading"));
   document.getElementById("start-listening").addEventListener("click", () => startQuiz("listening"));
   document.getElementById("quiz-next").addEventListener("click", nextQuestion);
-  document.getElementById("quiz-replay").addEventListener("click", () => {
-    const item = quiz.pool[quiz.index];
-    if (!item || !item.script || quiz.replays >= MAX_REPLAYS) return;
-    quiz.replays += 1;
-    speak(item.script);
-    renderReplayButton();
-  });
+  document.getElementById("quiz-replay").addEventListener("click", () => playCurrentScript("normal"));
+  document.getElementById("quiz-replay-slow").addEventListener("click", () => playCurrentScript("slow"));
   document.getElementById("quiz-retry").addEventListener("click", () => {
     document.getElementById("quiz-result").hidden = true;
     document.getElementById("quiz-start").hidden = false;
@@ -301,13 +328,16 @@ function setupQuiz() {
 // and the default TTS rate is slower than that, so the quiz was easier than the
 // exam. 1.15 is faster without blurring — the transcript is in the note either way.
 const SPEECH_RATE = 1.15;
+// The 천천히 듣기 pass, for a sentence that went by too fast to parse. Slow
+// enough to separate the moras, not so slow the pitch accent falls apart.
+const SLOW_SPEECH_RATE = 0.7;
 
-function speak(text) {
+function speak(text, rate = SPEECH_RATE) {
   if (!("speechSynthesis" in window)) return;
   window.speechSynthesis.cancel();
   const utter = new SpeechSynthesisUtterance(text);
   utter.lang = "ja-JP";
-  utter.rate = SPEECH_RATE;
+  utter.rate = rate;
   window.speechSynthesis.speak(utter);
 }
 
@@ -375,8 +405,14 @@ function renderQuizStartStatus() {
   });
 }
 
+// Deduped by value, not just filtered against the answer. Entries can legitimately
+// share one: お/を are both 오, and 탁음 brought じ/ぢ (지) and ず/づ (즈) with it,
+// since those really are homophones in modern Japanese. Without the dedupe a kana
+// round could render 지 as two separate choices.
 function pickDistractors(items, correctValue, field) {
-  return shuffle(items.filter((v) => v[field] !== correctValue))
+  const seen = new Set([correctValue]);
+  return shuffle(items)
+    .filter((v) => !seen.has(v[field]) && seen.add(v[field]))
     .slice(0, 3)
     .map((v) => v[field]);
 }
@@ -654,7 +690,7 @@ function renderQuestion() {
 
   const promptEl = document.getElementById("quiz-prompt");
   const hintEl = document.getElementById("quiz-hint");
-  const replayBtn = document.getElementById("quiz-replay");
+  const replaysEl = document.getElementById("quiz-replays");
   const revealEl = document.getElementById("quiz-reveal");
   const meaningEl = document.getElementById("quiz-meaning");
   promptEl.classList.remove("passage", "tappable");
@@ -667,8 +703,10 @@ function renderQuestion() {
   meaningEl.onclick = null;
   quiz.peeked = false;
   quiz.replays = 0;
-  replayBtn.hidden = true;
-  renderReplayButton();
+  quiz.slowReplays = 0;
+  quiz.answered = false;
+  replaysEl.hidden = true;
+  renderReplayButtons();
   let choices, answer;
 
   if (quiz.type === "hiragana" || quiz.type === "katakana") {
@@ -723,8 +761,8 @@ function renderQuestion() {
   } else {
     // listening
     promptEl.textContent = "🔊 음성을 듣고 뜻을 고르세요";
-    hintEl.textContent = `다시 듣기 ${MAX_REPLAYS}회까지`;
-    replayBtn.hidden = false;
+    hintEl.textContent = `다시 듣기는 각 ${MAX_REPLAYS}회, 정답 확인 후에는 자유롭게`;
+    replaysEl.hidden = false;
     // Authored near-miss distractors where the entry has them: a random meaning
     // from another sentence is eliminated by one caught word, so the question
     // tested nothing past that. item.choices differ by a single detail — a time,
@@ -783,6 +821,10 @@ function explanationFor(type, item) {
 function selectAnswer(btn, choice, answer, item) {
   const buttons = document.querySelectorAll(".choice-btn");
   buttons.forEach((b) => (b.disabled = true));
+  // Frees both replay buttons: the transcript is about to be on screen, and
+  // listening again while reading it is where the question actually teaches.
+  quiz.answered = true;
+  renderReplayButtons();
   const isCorrect = choice === answer;
   if (isCorrect) {
     btn.classList.add("correct");
