@@ -845,7 +845,14 @@ function selectAnswer(btn, choice, answer, item) {
     noteEl.textContent = note;
     noteEl.hidden = false;
   }
-  document.getElementById("quiz-next").hidden = false;
+  const nextBtn = document.getElementById("quiz-next");
+  nextBtn.hidden = false;
+  // 독해 passages plus a full note run past a phone screen — 23 of reading.json's
+  // 41 entries put this button below the fold at 390x844 — and hunting for 다음
+  // after every question is friction the quiz doesn't need. `block: "nearest"`
+  // scrolls the minimum required and does nothing at all when the button is
+  // already on screen, so short questions don't jump.
+  nextBtn.scrollIntoView({ block: "nearest" });
 }
 
 function nextQuestion() {
