@@ -693,15 +693,18 @@ async function main() {
       await page.close();
     }
 
-    // --- Every 독해 and 청해 entry leaves the 다음 button on screen ---
-    // These two have the tallest cards: 독해 shows a passage up to 107 characters
+    // --- Every 독해 / 청해 / 문법 entry leaves the 다음 button on screen ---
+    // These three have the tallest cards: 독해 shows a passage up to 107 characters
     // plus a note, 청해 shows four full-sentence Korean choices plus a note that
-    // repeats the script. Before selectAnswer scrolled the button into view, 23 of
-    // reading.json's 41 entries pushed it past the fold at phone size. A round only
-    // draws 10, so this walks each whole file rather than trusting the draw.
+    // repeats the script, and 문법 renders its sentence at the oversized 2.6rem
+    // .quiz-prompt so it wraps over several lines. Before selectAnswer scrolled the
+    // button into view, 23 of reading.json's 41 entries pushed it past the fold at
+    // phone size. A round only draws 10, so this walks each whole file rather than
+    // trusting the draw.
     for (const { type, file, keyField, answerField } of [
       { type: "reading", file: "reading.json", keyField: "passage", answerField: "answer" },
       { type: "listening", file: "listening.json", keyField: "script", answerField: "meaning" },
+      { type: "grammar", file: "grammar.json", keyField: "sentence", answerField: "answer" },
     ]) {
       const page = await browser.newPage({ viewport: PHONE });
       await page.goto(URL, { waitUntil: "networkidle" });
