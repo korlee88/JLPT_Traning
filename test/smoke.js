@@ -261,12 +261,23 @@ async function main() {
           kind
         );
         const map = new Map(rows.map((e) => [e.char, e.hangul]));
-        // 46 base + 20 탁음 + 5 반탁음
-        assert(rows.length === 71, `${kind}.json carries the base table plus 탁음/반탁음 (got ${rows.length})`);
-        const kana = kind === "hiragana" ? (c) => c : (c) => String.fromCodePoint(c.codePointAt(0) + 0x60);
+        // 46 base + 20 탁음 + 5 반탁음 + 33 요음 (ぢゃ행 제외). The kana table is a
+        // closed set, so this is the whole inventory — unlike every other quiz
+        // type, "more entries" here means completing the chart, not inventing.
+        assert(rows.length === 104, `${kind}.json carries the full kana chart (got ${rows.length})`);
+        // Maps every character, not just the first: 요음 are two characters, and
+        // converting only [0] turned きゃ into キ and faked a clash with き.
+        const kana =
+          kind === "hiragana"
+            ? (c) => c
+            : (c) => [...c].map((ch) => String.fromCodePoint(ch.codePointAt(0) + 0x60)).join("");
         for (const [plain, voiced] of [
           ["か", "が"], ["さ", "ざ"], ["た", "だ"], ["は", "ば"], ["は", "ぱ"], ["ば", "ぱ"],
           ["ち", "ぢ"], ["つ", "づ"], ["て", "で"], ["と", "ど"], ["き", "ぎ"], ["し", "じ"],
+          // 요음 against its own 탁음, and against the plain kana it is built from
+          ["きゃ", "ぎゃ"], ["きゅ", "ぎゅ"], ["きょ", "ぎょ"], ["しゃ", "じゃ"], ["しゅ", "じゅ"],
+          ["しょ", "じょ"], ["ひゃ", "びゃ"], ["ひょ", "びょ"], ["びゃ", "ぴゃ"], ["びょ", "ぴょ"],
+          ["き", "きゃ"], ["し", "しゃ"], ["ち", "ちゃ"], ["こ", "きょ"], ["そ", "しょ"], ["と", "ちょ"],
         ]) {
           const [a, b] = [kana(plain), kana(voiced)];
           assert(map.has(a) && map.has(b), `${kind}: both ${a} and ${b} are in the table`);
@@ -275,15 +286,21 @@ async function main() {
             `${kind}: ${a} and ${b} must not share a 한글 reading (both ${map.get(a)})`
           );
         }
-        // じ/ぢ and ず/づ do share one — they're homophones. That's allowed, but
-        // pickDistractors must dedupe or a round can show the same choice twice.
-        const dupes = [...new Set(rows.map((e) => e.hangul))].length;
-        assert(dupes < rows.length, `${kind}: homophone readings exist, so the dedupe below matters`);
+        // Five pairs legitimately share a reading — お/を, じ/ぢ, ず/づ, and the two
+        // 요음 brought in: ざ/じゃ (자) and ぞ/じょ (조). All are real facts of the
+        // 표기법, not data bugs, but pickDistractors must dedupe or a round can show
+        // the same choice twice. Pinned exactly, so a sixth can't appear unnoticed.
+        const shared = [...new Set(rows.map((e) => e.hangul))].length;
+        assert(
+          rows.length - shared === 5,
+          `${kind}: exactly 5 readings are shared by two kana (got ${rows.length - shared})`
+        );
       }
 
       {
         // Drive a full kana round and check every question's four choices are
-        // distinct — the case that breaks is じ and ぢ both rendering as 지.
+        // distinct — the cases that break are じ/ぢ both rendering as 지, or
+        // ざ/じゃ both as 자 now that 요음 are in.
         await page.click("#start-hiragana");
         for (let i = 0; i < 20; i++) {
           await page.waitForSelector("#quiz-choices .choice-btn");
