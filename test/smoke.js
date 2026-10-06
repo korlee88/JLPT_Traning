@@ -693,38 +693,42 @@ async function main() {
       await page.close();
     }
 
-    // --- Every 독해 entry leaves the 다음 button on screen ---
-    // Adding 33 passages took reading.json from 8 entries to 41 and the longest
-    // passage from 58 to 107 characters; before selectAnswer scrolled the button
-    // into view, 23 of the 41 pushed it past the fold at phone size. A round only
-    // draws 10, so this walks the whole file rather than trusting the draw.
-    {
+    // --- Every 독해 and 청해 entry leaves the 다음 button on screen ---
+    // These two have the tallest cards: 독해 shows a passage up to 107 characters
+    // plus a note, 청해 shows four full-sentence Korean choices plus a note that
+    // repeats the script. Before selectAnswer scrolled the button into view, 23 of
+    // reading.json's 41 entries pushed it past the fold at phone size. A round only
+    // draws 10, so this walks each whole file rather than trusting the draw.
+    for (const { type, file, keyField, answerField } of [
+      { type: "reading", file: "reading.json", keyField: "passage", answerField: "answer" },
+      { type: "listening", file: "listening.json", keyField: "script", answerField: "meaning" },
+    ]) {
       const page = await browser.newPage({ viewport: PHONE });
       await page.goto(URL, { waitUntil: "networkidle" });
       await page.click('.tab-btn[data-tab="quiz"]');
-      await page.click("#start-reading");
+      await page.click(`#start-${type}`);
       await page.waitForSelector("#quiz-choices .choice-btn");
-      const total = await page.evaluate(async () => {
-        const all = await fetch("data/n4/reading.json").then((r) => r.json());
+      const total = await page.evaluate(async (f) => {
+        const all = await fetch(`data/n4/${f}`).then((r) => r.json());
         quiz.pool = all;
         quiz.index = 0;
         renderQuestion();
         return all.length;
-      });
-      assert(total >= 10, `reading.json has enough entries to fill a round (got ${total})`);
+      }, file);
+      assert(total >= 10, `${file} has enough entries to fill a round (got ${total})`);
       const offScreen = [];
       for (let i = 0; i < total; i++) {
         await page.waitForSelector("#quiz-choices .choice-btn");
-        const answer = await page.evaluate(() => quiz.pool[quiz.index].answer);
+        const answer = await page.evaluate((f) => quiz.pool[quiz.index][f], answerField);
         await page.locator("#quiz-choices .choice-btn", { hasText: answer }).first().click();
         if (!(await nextButtonOnScreen(page))) {
-          offScreen.push(await page.evaluate(() => quiz.pool[quiz.index].passage.slice(0, 20)));
+          offScreen.push(await page.evaluate((f) => quiz.pool[quiz.index][f].slice(0, 20), keyField));
         }
         await page.click("#quiz-next");
       }
       assert(
         offScreen.length === 0,
-        `all ${total} 독해 entries leave 다음 on screen at ${PHONE.width}x${PHONE.height}` +
+        `all ${total} ${type} entries leave 다음 on screen at ${PHONE.width}x${PHONE.height}` +
           (offScreen.length ? ` (${offScreen.length} did not: ${offScreen.join(" | ")})` : "")
       );
       await page.close();
