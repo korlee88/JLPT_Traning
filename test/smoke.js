@@ -710,6 +710,37 @@ async function main() {
       await page.close();
     }
 
+    // --- 독해: the Korean translation shows after answering ---
+    {
+      const page = await browser.newPage({ viewport: PHONE });
+      await page.goto(URL, { waitUntil: "networkidle" });
+      const missing = await page.evaluate(async () => {
+        const all = await fetch("data/n4/reading.json").then((x) => x.json());
+        return all
+          .filter((e) => !e.translation || /[\u3040-\u30FF\u4E00-\u9FFF]/.test(e.translation))
+          .map((e) => e.passage.slice(0, 16));
+      });
+      assert(
+        missing.length === 0,
+        `every 독해 entry has a Korean translation with no Japanese left in it (${missing.length} bad: ${missing.slice(0, 3).join(" | ")})`
+      );
+
+      await page.click('.tab-btn[data-tab="quiz"]');
+      await page.click("#start-reading");
+      await page.waitForSelector("#quiz-choices .choice-btn");
+      const item = await page.evaluate(() => quiz.pool[quiz.index]);
+      assert(!(await page.isVisible("#quiz-note")), "the translation stays hidden until the question is answered");
+      await page.locator("#quiz-choices .choice-btn").first().click();
+      const note = await page.textContent("#quiz-note");
+      assert(note.includes(item.translation), `the note carries the passage's translation after answering`);
+      assert(note.includes(item.note), `the note still carries the explanation as well`);
+      assert(
+        note.indexOf(item.translation) < note.indexOf(item.note),
+        `the translation comes before the explanation`
+      );
+      await page.close();
+    }
+
     // --- 독해 furigana: the annotated copy must never drift from the passage ---
     // `ruby` carries the same text with 漢字（かな）, and the app strips the
     // annotations to render. If the two ever diverge the passage silently changes,
@@ -784,6 +815,37 @@ async function main() {
         `a tapped reading still counts as recall when answered right (passage not in the review queue)`
       );
       await page.close();
+    }
+
+    // --- 문법 renders at its own size, not the single-kanji 2.6rem ---
+    // Its sentences carry furigana as 漢字（かな）, which roughly doubles the
+    // character count; at 2.6rem one ran over three lines on a phone.
+    {
+      // One page each: #quiz-retry only exists on the result screen, so you can't
+      // switch quiz type mid-round.
+      const promptSize = async (type) => {
+        const page = await browser.newPage({ viewport: PHONE });
+        await page.goto(URL, { waitUntil: "networkidle" });
+        await page.click('.tab-btn[data-tab="quiz"]');
+        await page.click(`#start-${type}`);
+        await page.waitForSelector("#quiz-choices .choice-btn");
+        const px = await page.evaluate(
+          () => parseFloat(getComputedStyle(document.getElementById("quiz-prompt")).fontSize)
+        );
+        await page.close();
+        return px;
+      };
+      const grammarPx = await promptSize("grammar");
+      const kanjiPx = await promptSize("kanji");
+      assert(
+        grammarPx < kanjiPx / 2,
+        `the 문법 sentence is less than half the single-kanji prompt (${grammarPx}px vs ${kanjiPx}px)`
+      );
+      // the class must be cleared again, or 한자 would inherit the small size
+      assert(
+        kanjiPx > 40,
+        `한자 keeps the oversized prompt so strokes stay legible (${kanjiPx}px)`
+      );
     }
 
     // --- Every 독해 / 청해 / 문법 entry leaves the 다음 button on screen ---
