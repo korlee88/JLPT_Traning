@@ -128,6 +128,13 @@ main {
 
 .quiz-prompt { font-size: 2.6rem; font-weight: 600; margin: 16px 0 4px; white-space: pre-wrap; }
 .quiz-prompt.passage { font-size: 1rem; font-weight: 400; line-height: 1.6; text-align: left; }
+/* 문법 sits between the two: bigger than a passage, far smaller than a lone kanji.
+   2.6rem exists so kanji strokes are legible, but a 문법 sentence carries its own
+   furigana as 漢字（かな）— the reading is right there, so stroke-level legibility
+   isn't doing the work — and the parens roughly double the character count, which
+   at 2.6rem pushed a sentence over three lines. The owner asked for "절반넘게"
+   on 2026-10-07. Single-word prompts (한자/단어/가나) keep the full 2.6rem. */
+.quiz-prompt.sentence { font-size: 1.2rem; line-height: 1.7; text-align: left; }
 .quiz-prompt.tappable { cursor: pointer; }
 /* No display rule here on purpose: the [hidden] attribute does the hiding, so
    this can't repeat the .quiz-replay bug where an author `display` beat it. */

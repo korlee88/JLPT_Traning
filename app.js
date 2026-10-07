@@ -737,7 +737,7 @@ function renderQuestion() {
   const replaysEl = document.getElementById("quiz-replays");
   const revealEl = document.getElementById("quiz-reveal");
   const meaningEl = document.getElementById("quiz-meaning");
-  promptEl.classList.remove("passage", "tappable");
+  promptEl.classList.remove("passage", "sentence", "tappable");
   promptEl.onclick = null;
   revealEl.hidden = true;
   revealEl.classList.remove("revealed");
@@ -792,6 +792,7 @@ function renderQuestion() {
     choices = shuffle([item.reading, ...pickReadingDistractors(quiz.allItems, item)]);
     answer = item.reading;
   } else if (quiz.type === "grammar") {
+    promptEl.classList.add("sentence");
     promptEl.textContent = item.sentence;
     hintEl.textContent = item.meaning;
     choices = shuffle(item.choices);
@@ -854,7 +855,12 @@ function explanationFor(type, item) {
     case "grammar":
       return item.note || null;
     case "reading":
-      return item.note || null;
+      // The Korean translation of the passage comes first, then the explanation.
+      // Asked for on 2026-10-07: the furigana gets you through the reading, but
+      // you still finish the question without knowing what the passage said.
+      return [item.translation && `번역: ${item.translation}`, item.note]
+        .filter(Boolean)
+        .join("\n\n") || null;
     case "listening":
       return `스크립트: ${item.script}\n뜻: ${item.meaning}`;
     default:
