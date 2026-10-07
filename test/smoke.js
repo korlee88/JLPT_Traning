@@ -710,6 +710,82 @@ async function main() {
       await page.close();
     }
 
+    // --- 독해 furigana: the annotated copy must never drift from the passage ---
+    // `ruby` carries the same text with 漢字（かな）, and the app strips the
+    // annotations to render. If the two ever diverge the passage silently changes,
+    // so this checks every entry with the page's own stripRuby, not a copy of it.
+    {
+      const page = await browser.newPage({ viewport: PHONE });
+      await page.goto(URL, { waitUntil: "networkidle" });
+      const r = await page.evaluate(async () => {
+        const all = await fetch("data/n4/reading.json").then((x) => x.json());
+        const bad = [];
+        let annotated = 0;
+        let words = 0;
+        for (const e of all) {
+          if (!e.ruby) { bad.push(`${e.passage.slice(0, 16)}: no ruby`); continue; }
+          annotated++;
+          if (stripRuby(e.ruby) !== e.passage) bad.push(`${e.passage.slice(0, 16)}: strip mismatch`);
+          const n = [...e.ruby.matchAll(/([\u4E00-\u9FFF]+)（([\u3040-\u309F]+)）/gu)].length;
+          words += n;
+          // nothing may be left outside an annotation, or some kanji has no reading
+          const left = e.ruby.replace(/([\u4E00-\u9FFF]+)（([\u3040-\u309F]+)）/gu, "").match(/[\u4E00-\u9FFF]/gu);
+          if (left) bad.push(`${e.passage.slice(0, 16)}: ${left.join("")} unannotated`);
+        }
+        return { total: all.length, annotated, words, bad };
+      });
+      assert(r.annotated === r.total, `every 독해 passage carries furigana (${r.annotated}/${r.total})`);
+      assert(
+        r.bad.length === 0,
+        `every ruby strips back to its passage with no kanji left over (${r.bad.length} bad: ${r.bad.slice(0, 3).join(" | ")})`
+      );
+      assert(r.words > 1000, `the furigana is substantial, not a token few (${r.words} words)`);
+      await page.close();
+    }
+
+    // --- 독해: tapping a word in the passage shows its reading ---
+    {
+      const page = await browser.newPage({ viewport: PHONE });
+      await page.goto(URL, { waitUntil: "networkidle" });
+      await page.click('.tab-btn[data-tab="quiz"]');
+      await page.click("#start-reading");
+      await page.waitForSelector("#quiz-choices .choice-btn");
+
+      // The rendered passage must read exactly as the data does — the annotations
+      // are stripped out of the text and only survive as tap targets.
+      const shown = await page.textContent("#quiz-prompt");
+      const item = await page.evaluate(() => quiz.pool[quiz.index]);
+      assert(shown === item.passage, `the passage renders without its furigana markup`);
+      const taps = await page.locator("#quiz-prompt .ruby-word").count();
+      assert(taps > 0, `the passage offers tappable words (got ${taps})`);
+
+      const cue = (await page.textContent("#quiz-reveal")).trim();
+      assert(cue === "한자를 누르면 읽는 법", `the reveal line cues the tap before anything is tapped (got "${cue}")`);
+
+      const first = await page.evaluate(() => {
+        const m = [...quiz.pool[quiz.index].ruby.matchAll(/([\u4E00-\u9FFF]+)（([\u3040-\u309F]+)）/gu)][0];
+        return { word: m[1], reading: m[2] };
+      });
+      await page.locator("#quiz-prompt .ruby-word").first().click();
+      const revealed = (await page.textContent("#quiz-reveal")).trim();
+      assert(
+        revealed === `${first.word} → ${first.reading}`,
+        `tapping a word shows its reading (expected "${first.word} → ${first.reading}", got "${revealed}")`
+      );
+
+      // Reading a word is not the 독해 answer, so the peek is free — the same rule
+      // that penalizes the 한자 quiz's reading peek and spares the 단어 quiz's.
+      await page.locator("#quiz-choices .choice-btn", { hasText: item.answer }).first().click();
+      const queued = await page.evaluate(
+        () => JSON.parse(localStorage.getItem("jlpt_wrong_items_n4") || "{}").reading || []
+      );
+      assert(
+        !queued.includes(item.passage),
+        `a tapped reading still counts as recall when answered right (passage not in the review queue)`
+      );
+      await page.close();
+    }
+
     // --- Every 독해 / 청해 / 문법 entry leaves the 다음 button on screen ---
     // These three have the tallest cards: 독해 shows a passage up to 107 characters
     // plus a note, 청해 shows four full-sentence Korean choices plus a note that

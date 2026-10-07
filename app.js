@@ -682,6 +682,50 @@ function wireReveal(el, cue, value, { penalize = false, alsoTap = null } = {}) {
   }
 }
 
+// A 독해 passage's furigana lives in its own `ruby` field as 漢字（かな）, the same
+// notation grammar.json already uses. It is authored per passage rather than
+// derived, because a kanji's reading depends on the word it sits in — 行きます is
+// い but 行います is おこな, 時 is とき but 時間 is じ — so guessing one per
+// character would teach wrong readings, which is the worst failure mode here. The
+// passage text itself is NOT duplicated: stripRuby(ruby) must equal `passage`
+// exactly, and a smoke test checks that for every entry, so the two cannot drift.
+const RUBY = /([\u4E00-\u9FFF]+)（([\u3040-\u309F]+)）/gu;
+
+function stripRuby(ruby) {
+  return ruby.replace(RUBY, "$1");
+}
+
+// Builds the passage with each annotated word as its own tappable span. Tapping
+// one shows its reading in #quiz-reveal — the same line the 한자/단어 quizzes use.
+// Not penalized: the rule across the app is that a reveal costs the review-queue
+// credit only when what it reveals IS that quiz's answer, and 독해 asks which
+// statement matches the passage, not how a word is read.
+function renderRubyPassage(promptEl, item, revealEl) {
+  promptEl.textContent = "";
+  if (!item.ruby) {
+    promptEl.textContent = item.passage;
+    return;
+  }
+  const show = (word, reading) => {
+    revealEl.textContent = `${word} → ${reading}`;
+    revealEl.classList.add("revealed");
+    revealEl.hidden = false;
+  };
+  let last = 0;
+  for (const m of item.ruby.matchAll(RUBY)) {
+    if (m.index > last) promptEl.append(item.ruby.slice(last, m.index));
+    const span = document.createElement("span");
+    span.className = "ruby-word";
+    span.textContent = m[1];
+    span.onclick = () => show(m[1], m[2]);
+    promptEl.append(span);
+    last = m.index + m[0].length;
+  }
+  promptEl.append(item.ruby.slice(last));
+  revealEl.textContent = "한자를 누르면 읽는 법";
+  revealEl.hidden = false;
+}
+
 function renderQuestion() {
   const item = quiz.pool[quiz.index];
   document.getElementById("quiz-progress").textContent = `${quiz.index + 1} / ${quiz.pool.length}`;
@@ -754,7 +798,7 @@ function renderQuestion() {
     answer = item.answer;
   } else if (quiz.type === "reading") {
     promptEl.classList.add("passage");
-    promptEl.textContent = item.passage;
+    renderRubyPassage(promptEl, item, revealEl);
     hintEl.textContent = item.question;
     choices = shuffle(item.choices);
     answer = item.answer;
