@@ -33,6 +33,23 @@ async function nextButtonOnScreen(page) {
   return box.y >= 0 && box.y + box.height <= h;
 }
 
+// Headless Chromium has the Web Speech API but no voice, so what the app says can
+// only be checked by intercepting it. Records every utterance instead of speaking
+// it; must run before page.goto.
+async function spyOnSpeech(page) {
+  await page.addInitScript(() => {
+    window.__spoken = [];
+    window.SpeechSynthesisUtterance = function (text) { this.text = text; };
+    Object.defineProperty(window, "speechSynthesis", {
+      configurable: true,
+      value: {
+        speak: (u) => window.__spoken.push({ text: u.text, rate: u.rate, lang: u.lang }),
+        cancel: () => {},
+      },
+    });
+  });
+}
+
 // The 같은 글자를 쓰는 다른 단어 lines are derived, not authored, so the test asks the
 // page what it should have produced and checks the note carries exactly that —
 // including the case where the word shares no character and nothing is appended.
@@ -846,6 +863,138 @@ async function main() {
         kanjiPx > 40,
         `한자 keeps the oversized prompt so strokes stay legible (${kanjiPx}px)`
       );
+    }
+
+    // --- Picking an answer reads it aloud ---
+    // Asked for from the 외래어 quiz, where the whole question is a spelling you
+    // still can't pronounce after getting it right. The field spoken differs by
+    // type: 단어 asks for the Korean meaning, so it speaks the entry's reading
+    // rather than the answer the choices show.
+    {
+      const EXPECT = {
+        hiragana: (i) => i.char,
+        katakana: (i) => i.char,
+        loanword: (i) => i.word,
+        vocab: (i) => i.reading,
+        kanji: (i) => i.reading,
+        reading: (i) => i.answer,
+      };
+      for (const [type, expected] of Object.entries(EXPECT)) {
+        const page = await browser.newPage({ viewport: PHONE });
+        await spyOnSpeech(page);
+        await page.goto(URL, { waitUntil: "networkidle" });
+        await page.click('.tab-btn[data-tab="quiz"]');
+        await page.click(`#start-${type}`);
+        await page.waitForSelector("#quiz-choices .choice-btn");
+
+        const before = await page.evaluate(() => window.__spoken.length);
+        assert(before === 0, `${type}: silent until the question is answered (got ${before})`);
+        assert(
+          !(await page.isVisible("#quiz-say")),
+          `${type}: no 발음 듣기 button before answering`
+        );
+
+        const item = await page.evaluate(() => quiz.pool[quiz.index]);
+        // Deliberately the first choice, not the right one: a wrong answer is
+        // exactly when hearing the correct reading matters most.
+        await page.locator("#quiz-choices .choice-btn").first().click();
+        const spoken = await page.evaluate(() => window.__spoken);
+        assert(spoken.length === 1, `${type}: the answer is spoken once (got ${spoken.length})`);
+        assert(
+          spoken[0].text === expected(item),
+          `${type}: speaks ${JSON.stringify(expected(item))} (got ${JSON.stringify(spoken[0].text)})`
+        );
+        assert(spoken[0].lang === "ja-JP", `${type}: spoken with a Japanese voice (got "${spoken[0].lang}")`);
+        assert(spoken[0].rate === 1, `${type}: spoken at the plain answer rate (got ${spoken[0].rate})`);
+
+        await page.click("#quiz-say");
+        const repeated = await page.evaluate(() => window.__spoken.length);
+        assert(repeated === 2, `${type}: 발음 듣기 repeats the answer (got ${repeated} utterances)`);
+
+        await page.click("#quiz-next");
+        assert(
+          !(await page.isVisible("#quiz-say")),
+          `${type}: the button is cleared again on the next question`
+        );
+        await page.close();
+      }
+    }
+
+    // --- 문법 speaks the whole sentence with the blank filled ---
+    // A bare suffix has nothing to attach to, and 접속 is half of what the section
+    // tests. Both the sentence and the answer can carry 漢字（かな）, and a reading
+    // read aloud beside the kanji it annotates would double every word.
+    {
+      const page = await browser.newPage({ viewport: PHONE });
+      await spyOnSpeech(page);
+      await page.goto(URL, { waitUntil: "networkidle" });
+      await page.click('.tab-btn[data-tab="quiz"]');
+      await page.click("#start-grammar");
+      await page.waitForSelector("#quiz-choices .choice-btn");
+      await page.locator("#quiz-choices .choice-btn").first().click();
+      const { spoken, want } = await page.evaluate(() => {
+        const e = quiz.pool[quiz.index];
+        return {
+          spoken: window.__spoken,
+          want: stripRuby(e.sentence).replace("＿＿＿", stripRuby(e.answer)),
+        };
+      });
+      assert(spoken.length === 1, `문법: the filled sentence is spoken once (got ${spoken.length})`);
+      assert(spoken[0].text === want, `문법: speaks "${want}" (got "${spoken[0].text}")`);
+      assert(
+        !/[（）＿]/.test(spoken[0].text),
+        `문법: no furigana parens or blank left to read aloud (got "${spoken[0].text}")`
+      );
+
+      // Whole-file version of the same thing. A half-width ")" in one entry's
+      // furigana (休（やす)み) slipped past stripRuby and would have been spoken as
+      // part of the sentence — the kind of drift the 독해 ruby check already pins.
+      const g = await page.evaluate(async () => {
+        const all = await fetch("data/n4/grammar.json").then((x) => x.json());
+        const bad = [];
+        for (const e of all) {
+          const head = e.sentence.slice(0, 16);
+          if (!/^[^＿]*＿＿＿[^＿]*$/.test(e.sentence)) bad.push(`${head}: not exactly one blank`);
+          const left = e.sentence.replace(/([\u4E00-\u9FFF]+)（([\u3040-\u309F]+)）/gu, "")
+            .match(/[\u4E00-\u9FFF]/gu);
+          if (left) bad.push(`${head}: ${left.join("")} unannotated`);
+          const filled = stripRuby(e.sentence).replace("＿＿＿", stripRuby(e.answer));
+          if (/[（）()＿]/.test(filled)) bad.push(`${head}: "${filled}" still has markup`);
+        }
+        return { total: all.length, bad };
+      });
+      assert(
+        g.bad.length === 0,
+        `every 문법 sentence fills to clean Japanese (${g.bad.length} bad of ${g.total}: ${g.bad.slice(0, 3).join(" | ")})`
+      );
+      await page.close();
+    }
+
+    // --- 청해 says nothing extra on answering ---
+    // Its script is spoken already and both replay buttons go unlimited the moment
+    // you answer, so a third control repeating the same sentence would only crowd
+    // the screen.
+    {
+      const page = await browser.newPage({ viewport: PHONE });
+      await spyOnSpeech(page);
+      await page.goto(URL, { waitUntil: "networkidle" });
+      await page.click('.tab-btn[data-tab="quiz"]');
+      await page.click("#start-listening");
+      await page.waitForSelector("#quiz-choices .choice-btn");
+      const script = await page.evaluate(() => window.__spoken.map((u) => u.text));
+      assert(
+        script.length === 1,
+        `청해: the script is spoken when the question opens (got ${script.length})`
+      );
+      await page.locator("#quiz-choices .choice-btn").first().click();
+      const after = await page.evaluate(() => window.__spoken.length);
+      assert(after === 1, `청해: answering doesn't speak again (got ${after} utterances)`);
+      assert(!(await page.isVisible("#quiz-say")), `청해: no 발음 듣기 button`);
+      // The replay buttons are the ones that do this job here, and they're free now.
+      await page.click("#quiz-replay");
+      const replayed = await page.evaluate(() => window.__spoken.length);
+      assert(replayed === 2, `청해: 다시 듣기 still replays the script (got ${replayed})`);
+      await page.close();
     }
 
     // --- Every 독해 / 청해 / 문법 entry leaves the 다음 button on screen ---

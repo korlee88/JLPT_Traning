@@ -331,6 +331,10 @@ const SPEECH_RATE = 1.15;
 // The 천천히 듣기 pass, for a sentence that went by too fast to parse. Slow
 // enough to separate the moras, not so slow the pitch accent falls apart.
 const SLOW_SPEECH_RATE = 0.7;
+// The answer read aloud after you pick one. Back at the plain default, not 청해's
+// 1.15: that rate exists to match exam audio, and this isn't a listening test —
+// it's "so how is this actually pronounced", where clarity is the whole job.
+const ANSWER_SPEECH_RATE = 1.0;
 
 function speak(text, rate = SPEECH_RATE) {
   if (!("speechSynthesis" in window)) return;
@@ -731,6 +735,9 @@ function renderQuestion() {
   document.getElementById("quiz-progress").textContent = `${quiz.index + 1} / ${quiz.pool.length}`;
   document.getElementById("quiz-note").hidden = true;
   document.getElementById("quiz-next").hidden = true;
+  const sayEl = document.getElementById("quiz-say");
+  sayEl.hidden = true;
+  sayEl.onclick = null;
 
   const promptEl = document.getElementById("quiz-prompt");
   const hintEl = document.getElementById("quiz-hint");
@@ -868,6 +875,44 @@ function explanationFor(type, item) {
   }
 }
 
+// What gets read aloud once an answer is picked — the Japanese the question was
+// about, in its correct reading. Asked for on 2026-10-08 from the 외래어 quiz,
+// where the entire question is a spelling (파티 → パーティー) you still can't
+// pronounce after getting it right, and extended to 단어 in the same breath.
+//
+// 단어 is the type where "the answer" and "what to speak" come apart: that quiz
+// asks for the Korean meaning, and reading 만나다 back in a Japanese voice would
+// teach nothing — so it speaks the entry's reading, あう, which is the thing the
+// prompt 会う actually sounds like. 한자 lands on the same field from the other
+// direction, where the reading IS the answer.
+//
+// 청해 gets nothing: its script is spoken already and both replay buttons go
+// unlimited the moment you answer, so a third control saying the same sentence
+// would only crowd the screen.
+function answerSpeech(type, item) {
+  switch (type) {
+    case "hiragana":
+    case "katakana":
+      return item.char;
+    case "loanword":
+      return item.word;
+    case "vocab":
+    case "kanji":
+      return item.reading;
+    case "grammar":
+      // The blank filled in, so the pattern is heard where it attaches rather
+      // than as a bare suffix — 접속 is half of what 문법 tests. Both halves need
+      // stripRuby: the sentence carries 漢字（かな）and several answers carry
+      // their own (召（め）し上（あ）がり), and a 「かな」read aloud beside the
+      // kanji it annotates would double every word.
+      return stripRuby(item.sentence).replace("＿＿＿", stripRuby(item.answer));
+    case "reading":
+      return item.answer;
+    default:
+      return null;
+  }
+}
+
 function selectAnswer(btn, choice, answer, item) {
   const buttons = document.querySelectorAll(".choice-btn");
   buttons.forEach((b) => (b.disabled = true));
@@ -895,6 +940,19 @@ function selectAnswer(btn, choice, answer, item) {
     noteEl.textContent = note;
     noteEl.hidden = false;
   }
+  // Say the answer out loud, and leave the button for a repeat — one pass over a
+  // 문법 sentence isn't enough. Everything that changes the page height has to
+  // happen before the scrollIntoView below, or it measures a layout that's about
+  // to move. Hidden when there's nothing to say (청해) or no voice to say it
+  // with, rather than left on screen as a dead control.
+  const sayEl = document.getElementById("quiz-say");
+  const speech = answerSpeech(quiz.type, item);
+  if (speech && "speechSynthesis" in window) {
+    sayEl.hidden = false;
+    sayEl.onclick = () => speak(speech, ANSWER_SPEECH_RATE);
+    speak(speech, ANSWER_SPEECH_RATE);
+  }
+
   const nextBtn = document.getElementById("quiz-next");
   nextBtn.hidden = false;
   // 독해 passages plus a full note run past a phone screen — 23 of reading.json's

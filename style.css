@@ -172,6 +172,15 @@ main {
 .choice-btn.wrong { background: var(--bad); color: #fff; border-color: var(--bad); }
 .choice-btn:disabled { cursor: default; }
 
+/* Secondary on purpose: it sits one tap away from 다음, and two identical accent
+   buttons stacked on a phone is a mis-tap waiting to happen. No display rule, so
+   the [hidden] attribute still hides it (the .quiz-replay trap). */
+#quiz-say {
+  margin-top: 12px;
+  background: none;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
 .quiz-note { margin-top: 12px; color: var(--muted); font-size: 0.9rem; white-space: pre-line; }
 
 table#plan-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
