@@ -33,11 +33,15 @@ const QUIZ_KEY_FIELD = {
   listening: "script",
 };
 const WRONG_ITEMS_KEY = `jlpt_wrong_items_${CURRENT_LEVEL}`;
-// Questions per round. Kana and kanji are single-item recall — fast per
-// question — so they run longer rounds; types not listed here use the default.
+// Questions per round. Everything is 10 now, and 독해/청해 are 5: the owner's
+// 2026-10-08 note was "다하기 많네" — eight quizzes a day is the real unit of work,
+// not one round, and 가나/한자 at 20 each made that over 100 questions. 독해/청해
+// go shorter still because one of their questions is several of anyone else's: a
+// passage plus its translation to read through, or a sentence you have to listen
+// to before you can even start choosing.
 // A round is still capped at the number of entries the data file actually has.
 const DEFAULT_ROUND_SIZE = 10;
-const QUIZ_ROUND_SIZE = { hiragana: 20, katakana: 20, kanji: 20 };
+const QUIZ_ROUND_SIZE = { reading: 5, listening: 5 };
 // How much of a round the review queue may take (see buildQuizPool). Half
 // keeps missed items coming back often without crowding out new material.
 const REVIEW_SHARE = 0.5;
@@ -549,7 +553,10 @@ function buildQuizPool(items, wrongKeys, keyField, size) {
   if (!keyField || wrongKeys.length === 0) return shuffle(items).slice(0, size);
   const wrongItems = shuffle(items.filter((v) => wrongKeys.includes(v[keyField])));
   const otherItems = shuffle(items.filter((v) => !wrongKeys.includes(v[keyField])));
-  const reviewCap = Math.max(1, Math.round(size * REVIEW_SHARE));
+  // floor, not round: at a round of 5 (독해/청해) rounding would hand review 3 of
+  // the 5 slots, which is more than half — the exact thing REVIEW_SHARE is here to
+  // bound. Even round sizes come out the same either way.
+  const reviewCap = Math.max(1, Math.floor(size * REVIEW_SHARE));
   const pool = wrongItems.slice(0, reviewCap);
   pool.push(...otherItems.slice(0, size - pool.length));
   if (pool.length < size) pool.push(...wrongItems.slice(reviewCap, reviewCap + size - pool.length));

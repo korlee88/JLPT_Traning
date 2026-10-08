@@ -209,14 +209,15 @@ async function main() {
       // used to hold 독해 to 8; reading.json passed 10 entries on 2026-10-05, so
       // every type now runs its full configured length.
       const EXPECTED_ROUND_SIZE = {
-        "#start-hiragana": 20,
-        "#start-katakana": 20,
+        "#start-hiragana": 10,
+        "#start-katakana": 10,
         "#start-loanword": 10,
-        "#start-kanji": 20,
+        "#start-kanji": 10,
         "#start-vocab": 10,
         "#start-grammar": 10,
-        "#start-reading": 10,
-        "#start-listening": 10,
+        // Short on purpose: one of these questions is several of anyone else's.
+        "#start-reading": 5,
+        "#start-listening": 5,
       };
 
       async function runQuizRound(startButtonId, onFirstQuestion, onFirstAnswer) {
@@ -319,7 +320,12 @@ async function main() {
         // distinct — the cases that break are じ/ぢ both rendering as 지, or
         // ざ/じゃ both as 자 now that 요음 are in.
         await page.click("#start-hiragana");
-        for (let i = 0; i < 20; i++) {
+        await page.waitForSelector("#quiz-choices .choice-btn");
+        // Read the length off the page rather than hardcoding it — this loop sat
+        // at a stale 20 when the round shrank to 10, and the failure it produced
+        // (clicking a disabled button on the result screen) said nothing about why.
+        const kanaRound = await page.evaluate(() => quiz.pool.length);
+        for (let i = 0; i < kanaRound; i++) {
           await page.waitForSelector("#quiz-choices .choice-btn");
           const shown = await page.evaluate(() =>
             [...document.querySelectorAll("#quiz-choices .choice-btn")].map((b) => b.textContent)
@@ -1055,13 +1061,17 @@ async function main() {
         return {
           share: REVIEW_SHARE,
           bigQueue: run(wrong, 10).map((v) => v.word),
+          // 독해/청해 run 5 — the size where rounding the cap would quietly push
+          // review past half the round.
+          shortRound: run(wrong, 5).map((v) => v.word),
           // Nothing fresh left to pull: review spills past the cap rather than
           // leaving the round short.
           nothingFresh: run(wrong.slice(0, 8), 8, items.slice(0, 8)).map((v) => v.word),
           wrong,
         };
       });
-      const cap = Math.max(1, Math.round(10 * pools.share));
+      const cap = Math.max(1, Math.floor(10 * pools.share));
+      const shortCap = Math.max(1, Math.floor(5 * pools.share));
       const reviewed = pools.bigQueue.filter((w) => pools.wrong.includes(w)).length;
       assert(
         pools.bigQueue.length === 10,
@@ -1074,6 +1084,11 @@ async function main() {
       assert(
         new Set(pools.bigQueue).size === 10,
         "a round never repeats an item"
+      );
+      const shortReviewed = pools.shortRound.filter((w) => pools.wrong.includes(w)).length;
+      assert(
+        pools.shortRound.length === 5 && shortReviewed <= shortCap,
+        `a 5-question round keeps review at or under half (got ${shortReviewed} of ${pools.shortRound.length}, cap ${shortCap})`
       );
       assert(
         pools.nothingFresh.length === 8 && new Set(pools.nothingFresh).size === 8,
