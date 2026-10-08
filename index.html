@@ -11,6 +11,9 @@
   <header class="topbar">
     <h1>JLPT N4 학습 트래커</h1>
     <p id="dday" class="dday"></p>
+    <!-- What to do *today*, not just this week. Lives in the topbar so it is on
+         screen from every tab, which is the whole point of asking for it. -->
+    <p id="today-task" class="today-task" hidden></p>
   </header>
 
   <nav class="tabs">
@@ -25,6 +28,7 @@
       <div class="card" id="week-card">
         <h2 id="week-title">이번 주</h2>
         <p id="week-focus"></p>
+        <p id="week-daily" class="week-daily" hidden></p>
       </div>
 
       <div class="card">
