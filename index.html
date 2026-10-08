@@ -53,6 +53,13 @@
             <button id="start-reading" class="btn quiz-type-btn" data-type="reading">독해 쪽지시험</button>
             <button id="start-listening" class="btn quiz-type-btn" data-type="listening">청해 쪽지시험</button>
           </div>
+          <!-- The wrong-answer queue has steered review rounds since #33 without
+               ever being visible. Here it is, with a button to drill just it. -->
+          <section id="wrong-note" class="wrong-note">
+            <h3>오답 노트 <span id="wrong-total" class="wrong-total"></span></h3>
+            <p id="wrong-empty" class="wrong-empty" hidden>아직 틀린 문항이 없습니다. 쪽지시험에서 틀리면 여기 모이고, 다시 맞히면 사라집니다.</p>
+            <div id="wrong-groups"></div>
+          </section>
         </div>
         <div id="quiz-play" hidden>
           <p id="quiz-progress"></p>

@@ -33,6 +33,20 @@ async function nextButtonOnScreen(page) {
   return box.y >= 0 && box.y + box.height <= h;
 }
 
+// Clicks the choice whose text is exactly `text`. Playwright's hasText is a
+// substring match, which picked the wrong button whenever one choice contained
+// another — vocab.json has 정하다 (決める) and 다정하다/친절하다, so a round drawing
+// both answered the question wrong and the failure blamed the review queue.
+async function clickChoice(page, text) {
+  const i = await page.evaluate(
+    (want) => [...document.querySelectorAll("#quiz-choices .choice-btn")]
+      .findIndex((b) => b.textContent === want),
+    text
+  );
+  assert(i >= 0, `the choice "${text}" is on screen to click`);
+  await page.locator("#quiz-choices .choice-btn").nth(i).click();
+}
+
 // Headless Chromium has the Web Speech API but no voice, so what the app says can
 // only be checked by intercepting it. Records every utterance instead of speaking
 // it; must run before page.goto.
@@ -659,7 +673,7 @@ async function main() {
         renderQuestion();
         return { groups, word: target.word, reading: target.reading, lines: radicalLines(target.word) };
       });
-      await page.locator("#quiz-choices .choice-btn", { hasText: probe.reading }).first().click();
+      await clickChoice(page, probe.reading);
       const radNote = await page.textContent("#quiz-note");
       for (const line of probe.lines) {
         assert(radNote.includes(line), `radical line shows for ${probe.word} (expected "${line}" in "${radNote}")`);
@@ -701,7 +715,7 @@ async function main() {
       // draws first is random and may be a kana-only one with no reading to show.
       const vocabShown = (await page.textContent("#quiz-reveal")).trim();
       assert(vocabShown === item.reading, `vocab reading reveals on tap (got "${vocabShown}", expected "${item.reading}")`);
-      await page.locator("#quiz-choices .choice-btn", { hasText: item.meaning }).first().click();
+      await clickChoice(page, item.meaning);
       const vocabQueued = await page.evaluate(() => JSON.parse(localStorage.getItem("jlpt_wrong_items_n4") || "{}").vocab || []);
       assert(
         !vocabQueued.includes(item.word),
@@ -723,7 +737,7 @@ async function main() {
       const peeked = await page.evaluate(() => quiz.pool[quiz.index]);
       await page.click("#quiz-prompt");
       // Answer it correctly — without the peek this would clear it from review.
-      await page.locator("#quiz-choices .choice-btn", { hasText: peeked.reading }).first().click();
+      await clickChoice(page, peeked.reading);
 
       const queued = await page.evaluate(() => JSON.parse(localStorage.getItem("jlpt_wrong_items_n4") || "{}").kanji || []);
       assert(
@@ -829,7 +843,7 @@ async function main() {
 
       // Reading a word is not the 독해 answer, so the peek is free — the same rule
       // that penalizes the 한자 quiz's reading peek and spares the 단어 quiz's.
-      await page.locator("#quiz-choices .choice-btn", { hasText: item.answer }).first().click();
+      await clickChoice(page, item.answer);
       const queued = await page.evaluate(
         () => JSON.parse(localStorage.getItem("jlpt_wrong_items_n4") || "{}").reading || []
       );
@@ -1033,7 +1047,7 @@ async function main() {
       for (let i = 0; i < total; i++) {
         await page.waitForSelector("#quiz-choices .choice-btn");
         const answer = await page.evaluate((f) => quiz.pool[quiz.index][f], answerField);
-        await page.locator("#quiz-choices .choice-btn", { hasText: answer }).first().click();
+        await clickChoice(page, answer);
         if (!(await nextButtonOnScreen(page))) {
           offScreen.push(await page.evaluate((f) => quiz.pool[quiz.index][f].slice(0, 20), keyField));
         }
@@ -1044,6 +1058,150 @@ async function main() {
         `all ${total} ${type} entries leave 다음 on screen at ${PHONE.width}x${PHONE.height}` +
           (offScreen.length ? ` (${offScreen.length} did not: ${offScreen.join(" | ")})` : "")
       );
+      await page.close();
+    }
+
+    // --- 오답 노트: the review queue, rendered ---
+    // The queue has steered review rounds since #33 while being invisible, so
+    // nothing here could regress noticeably. These checks are the floor: the
+    // groups match the store, the lines match what the page itself formats, and a
+    // key whose entry has left the data file is dropped rather than counted.
+    {
+      const page = await browser.newPage({ viewport: PHONE });
+      await page.goto(URL, { waitUntil: "networkidle" });
+      await page.click('.tab-btn[data-tab="quiz"]');
+      await page.waitForSelector("#wrong-note");
+      assert(await page.isVisible("#wrong-empty"), "오답 노트 says so while nothing is queued");
+      assert(
+        (await page.textContent("#wrong-total")).trim() === "",
+        "no count badge on an empty queue"
+      );
+      assert((await page.locator(".wrong-group").count()) === 0, "no groups on an empty queue");
+
+      // Seeded the way wrong answers would leave it, plus one key whose entry is
+      // gone — that one can never be answered right again, so it has to be pruned
+      // or it inflates the count forever.
+      const STALE = "存在しない語";
+      const seeded = await page.evaluate(async (stale) => {
+        const kanji = await fetch("data/n4/kanji.json").then((r) => r.json());
+        const vocab = await fetch("data/n4/vocab.json").then((r) => r.json());
+        const kanjiKeys = kanji.slice(0, 12).map((e) => e.word);
+        const vocabKeys = vocab.slice(0, 2).map((e) => e.word);
+        localStorage.setItem(
+          "jlpt_wrong_items_n4",
+          JSON.stringify({ kanji: [...kanjiKeys, stale], vocab: vocabKeys })
+        );
+        return { kanjiKeys, vocabKeys };
+      }, STALE);
+
+      await page.reload({ waitUntil: "networkidle" });
+      await page.click('.tab-btn[data-tab="quiz"]');
+      await page.waitForFunction(() => document.querySelectorAll(".wrong-group").length === 2);
+
+      const summaries = await page.$$eval(".wrong-name", (els) => els.map((e) => e.textContent));
+      assert(
+        summaries.join(" | ") === "단어 2개 | 한자 12개",
+        `the note groups by type in the quiz buttons' order (got "${summaries.join(" | ")}")`
+      );
+      const totalBadge = (await page.textContent("#wrong-total")).trim();
+      assert(totalBadge === "(14)", `the heading counts every queued item (got "${totalBadge}")`);
+      assert(!(await page.isVisible("#wrong-empty")), "the empty line is gone once something is queued");
+
+      const stored = await page.evaluate(
+        () => JSON.parse(localStorage.getItem("jlpt_wrong_items_n4")).kanji
+      );
+      assert(
+        !stored.includes(STALE) && stored.length === 12,
+        `a key with no entry left in the data file is pruned from the queue (got ${stored.length} keys)`
+      );
+
+      // The lines are asked of the page, not reimplemented here — the word-shaped
+      // types take the post-answer recap's own first line, so this also pins that
+      // the two haven't drifted apart.
+      const lines = await page.evaluate(async (keys) => {
+        const kanji = await fetch("data/n4/kanji.json").then((r) => r.json());
+        const byWord = new Map(kanji.map((e) => [e.word, e]));
+        const group = [...document.querySelectorAll(".wrong-group")]
+          .find((g) => g.querySelector(".wrong-name").textContent.startsWith("한자"));
+        return {
+          want: keys.map((k) => reviewLine("kanji", byWord.get(k))),
+          got: [...group.querySelectorAll(".wrong-list li")].map((li) => li.textContent),
+        };
+      }, seeded.kanjiKeys);
+      assert(
+        lines.got.join("\n") === lines.want.join("\n"),
+        `every queued item is listed as the page formats it (got ${lines.got.length} lines, wanted ${lines.want.length})`
+      );
+      assert(
+        lines.want[0].includes("\u2192") && lines.want[0].includes("("),
+        `a 한자 line carries word, reading and meaning (got "${lines.want[0]}")`
+      );
+
+      const drillLabels = await page.$$eval(".wrong-drill", (els) => els.map((e) => e.textContent));
+      assert(
+        drillLabels.join(" | ") === "오답만 풀기 (2문제) | 오답만 풀기 (10문제)",
+        `the drill button says how long the round will be, capped at the round size (got "${drillLabels.join(" | ")}")`
+      );
+      await page.close();
+    }
+
+    // --- 오답만 풀기 drills the queue and empties it ---
+    {
+      const page = await browser.newPage({ viewport: PHONE });
+      await page.goto(URL, { waitUntil: "networkidle" });
+      const seeded = await page.evaluate(async () => {
+        const vocab = await fetch("data/n4/vocab.json").then((r) => r.json());
+        const keys = vocab.slice(0, 6).map((e) => e.word);
+        localStorage.setItem("jlpt_wrong_items_n4", JSON.stringify({ vocab: keys }));
+        // Today's 단어 result already recorded, from a full round.
+        localStorage.setItem(
+          "jlpt_quiz_results_n4",
+          JSON.stringify({ [todayStr()]: { vocab: { score: 9, total: 10 } } })
+        );
+        return keys;
+      });
+      await page.reload({ waitUntil: "networkidle" });
+      await page.click('.tab-btn[data-tab="quiz"]');
+      await page.waitForSelector(".wrong-drill");
+      await page.click(".wrong-drill");
+      await page.waitForSelector("#quiz-choices .choice-btn");
+
+      const pool = await page.evaluate(() => ({
+        words: quiz.pool.map((v) => v.word),
+        wrongOnly: quiz.wrongOnly,
+      }));
+      assert(pool.wrongOnly, "the drill round is marked wrongOnly");
+      assert(
+        pool.words.length === 6 && pool.words.every((w) => seeded.includes(w)),
+        `every question in the drill comes from the queue (got ${pool.words.length}: ${pool.words.join(", ")})`
+      );
+      assert(new Set(pool.words).size === pool.words.length, "the drill round never repeats an item");
+
+      // Answer all six right — the queue is a leaky bucket, so it should empty.
+      for (let i = 0; i < pool.words.length; i++) {
+        await page.waitForSelector("#quiz-choices .choice-btn");
+        const want = await page.evaluate(() => quiz.pool[quiz.index].meaning);
+        await clickChoice(page, want);
+        await page.click("#quiz-next");
+      }
+      await page.waitForSelector("#quiz-result:not([hidden])");
+      await page.click("#quiz-retry");
+      await page.waitForFunction(() => document.querySelectorAll(".wrong-group").length === 0);
+      assert(await page.isVisible("#wrong-empty"), "answering the queue right empties the 오답 노트");
+
+      // The badge is "today's 쪽지시험": a 6-item drill of items you already missed
+      // must not overwrite a full round's score.
+      const badge = await page.evaluate(
+        () => JSON.parse(localStorage.getItem("jlpt_quiz_results_n4"))[todayStr()].vocab
+      );
+      assert(
+        badge.score === 9 && badge.total === 10,
+        `a drill round leaves an existing result alone (got ${badge.score}/${badge.total})`
+      );
+      const checked = await page.evaluate(
+        () => (JSON.parse(localStorage.getItem("jlpt_daily_checklist_n4"))[todayStr()] || [])[0]
+      );
+      assert(checked === true, "finishing a drill still ticks the checklist item it maps to");
       await page.close();
     }
 
