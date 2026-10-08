@@ -42,6 +42,10 @@ const WRONG_ITEMS_KEY = `jlpt_wrong_items_${CURRENT_LEVEL}`;
 // A round is still capped at the number of entries the data file actually has.
 const DEFAULT_ROUND_SIZE = 10;
 const QUIZ_ROUND_SIZE = { reading: 5, listening: 5 };
+
+function roundSizeFor(type) {
+  return QUIZ_ROUND_SIZE[type] || DEFAULT_ROUND_SIZE;
+}
 // How much of a round the review queue may take (see buildQuizPool). Half
 // keeps missed items coming back often without crowding out new material.
 const REVIEW_SHARE = 0.5;
@@ -98,6 +102,10 @@ function setupTabs() {
       btn.classList.add("active");
       document.getElementById(`tab-${btn.dataset.tab}`).classList.add("active");
       if (btn.dataset.tab === "radical") renderRadicalTab();
+      // Not guarded like renderRadicalTab: the counts move with every round, so
+      // this repaints each time the tab is opened. Still not at startup — its
+      // fetches would delay the 오늘 체크 screen for a list nobody is looking at.
+      if (btn.dataset.tab === "quiz") renderWrongNote();
     });
   });
 }
@@ -268,7 +276,7 @@ function renderPlanTable(plan) {
 const MAX_REPLAYS = 1;
 const quiz = {
   type: null, pool: [], index: 0, score: 0, allItems: [],
-  replays: 0, slowReplays: 0, answered: false,
+  replays: 0, slowReplays: 0, answered: false, wrongOnly: false,
 };
 
 // Replays left at `speed` on the current question. The slow pass keeps its own
@@ -324,6 +332,7 @@ function setupQuiz() {
     document.getElementById("quiz-result").hidden = true;
     document.getElementById("quiz-start").hidden = false;
     renderQuizStartStatus();
+    renderWrongNote();
   });
   renderQuizStartStatus();
 }
@@ -411,6 +420,117 @@ function renderQuizStartStatus() {
       btn.classList.remove("done-today");
     }
   });
+}
+
+// ---------- 오답 노트 ----------
+// The wrong-answer queue has been steering review rounds since #33, but you could
+// never *see* it: the only way to learn what you keep missing was to keep missing
+// it. This renders the queue itself — per quiz type, with a button to run a round
+// of nothing but those items. It is also the short answer to "다하기 많네"
+// (2026-10-08): drilling the six words you actually got wrong beats redoing eight
+// full quizzes to meet them again.
+let _wrongData = {}; // type -> entries, so reopening the note doesn't refetch
+
+async function wrongEntriesFor(type) {
+  if (!_wrongData[type]) {
+    _wrongData[type] = await fetch(`data/${CURRENT_LEVEL}/${type}.json`).then((r) => r.json());
+  }
+  return _wrongData[type];
+}
+
+// One line per missed item. The word-shaped types reuse the post-answer recap's
+// own first line rather than formatting it again, so the two can't drift; the
+// lines explanationFor puts under it (부수, 같은 글자를 쓰는 단어) belong in a note
+// and not in a list. The three sentence-shaped types need their own label — a
+// 문법 note is a paragraph, and what identifies a 독해 entry in a list is its
+// question, not the translation that heads its recap.
+function reviewLine(type, item) {
+  switch (type) {
+    case "grammar":
+      return `${answerSpeech(type, item)} — ${item.meaning}`;
+    case "reading":
+      return `${item.question} — ${item.answer}`;
+    case "listening":
+      return `${item.script} — ${item.meaning}`;
+    default:
+      return (explanationFor(type, item) || "").split("\n")[0];
+  }
+}
+
+// Quiz labels without the "쪽지시험" tail — derived rather than kept as a second
+// table, which would be one more pair of things to hold in sync.
+function shortTypeLabel(type) {
+  return QUIZ_TYPE_LABELS[type].replace(" 쪽지시험", "");
+}
+
+async function renderWrongNote() {
+  const groupsEl = document.getElementById("wrong-groups");
+  const emptyEl = document.getElementById("wrong-empty");
+  const totalEl = document.getElementById("wrong-total");
+  const store = loadWrongItems();
+  groupsEl.innerHTML = "";
+  let total = 0;
+  let pruned = false;
+
+  // Object.keys(QUIZ_TYPE_LABELS) rather than the store's own key order, so the
+  // groups come out in the same order as the quiz buttons above them.
+  for (const type of Object.keys(QUIZ_TYPE_LABELS)) {
+    if (!(store[type] || []).length) continue;
+    const entries = await wrongEntriesFor(type);
+    const keyField = QUIZ_KEY_FIELD[type];
+    const byKey = new Map(entries.map((e) => [e[keyField], e]));
+    // A key whose entry has since left the data file can never be answered
+    // correctly again, so it would sit in the queue forever and make the count
+    // disagree with the list. Dropped here, where the file is already loaded.
+    const keys = store[type].filter((k) => byKey.has(k));
+    if (keys.length !== store[type].length) {
+      store[type] = keys;
+      pruned = true;
+    }
+    if (!keys.length) continue;
+    total += keys.length;
+
+    const group = document.createElement("div");
+    group.className = "wrong-group";
+
+    // The drill button stays outside the collapsible part: it is the reason the
+    // note exists, and burying the one action behind a tap to expand would undo
+    // the point of it. Only the list collapses — a 40-word 한자 queue would
+    // otherwise push the quiz buttons it sits under off the screen.
+    const head = document.createElement("div");
+    head.className = "wrong-head";
+    const name = document.createElement("span");
+    name.className = "wrong-name";
+    name.textContent = `${shortTypeLabel(type)} ${keys.length}개`;
+    const drill = document.createElement("button");
+    drill.className = "btn wrong-drill";
+    drill.dataset.type = type;
+    drill.textContent = `오답만 풀기 (${Math.min(keys.length, roundSizeFor(type))}문제)`;
+    drill.addEventListener("click", () => startQuiz(type, { wrongOnly: true }));
+    head.append(name, drill);
+    group.append(head);
+
+    const detail = document.createElement("details");
+    detail.className = "wrong-detail";
+    const summary = document.createElement("summary");
+    summary.textContent = "목록 보기";
+    detail.append(summary);
+    const list = document.createElement("ul");
+    list.className = "wrong-list";
+    list.lang = "ja";
+    for (const k of keys) {
+      const li = document.createElement("li");
+      li.textContent = reviewLine(type, byKey.get(k));
+      list.append(li);
+    }
+    detail.append(list);
+    group.append(detail);
+    groupsEl.append(group);
+  }
+
+  if (pruned) saveWrongItems(store);
+  totalEl.textContent = total ? `(${total})` : "";
+  emptyEl.hidden = total > 0;
 }
 
 // Deduped by value, not just filtered against the answer. Entries can legitimately
@@ -654,7 +774,10 @@ function relatedWordLines(word) {
   return lines;
 }
 
-async function startQuiz(type) {
+// `wrongOnly` runs a round drawn entirely from the 오답 노트 — still capped at the
+// type's round length, since the point of it is a short targeted session. A normal
+// round mixes review with fresh material instead (buildQuizPool).
+async function startQuiz(type, { wrongOnly = false } = {}) {
   const res = await fetch(`data/${CURRENT_LEVEL}/${type}.json`);
   const items = await res.json();
   if (XREF_TYPES.includes(type)) await Promise.all([buildXrefIndex(), buildRadicalIndex()]);
@@ -662,8 +785,21 @@ async function startQuiz(type) {
   quiz.allItems = items;
   const keyField = QUIZ_KEY_FIELD[type];
   const wrongKeys = loadWrongItems()[type] || [];
-  const roundSize = QUIZ_ROUND_SIZE[type] || DEFAULT_ROUND_SIZE;
-  quiz.pool = buildQuizPool(items, wrongKeys, keyField, Math.min(roundSize, items.length));
+  const roundSize = roundSizeFor(type);
+  quiz.wrongOnly = wrongOnly;
+  if (wrongOnly) {
+    const queued = new Set(wrongKeys);
+    const only = items.filter((v) => queued.has(v[keyField]));
+    // Cleared between opening the note and tapping the button: nothing to drill,
+    // so repaint the note instead of starting an empty round.
+    if (!only.length) {
+      renderWrongNote();
+      return;
+    }
+    quiz.pool = shuffle(only).slice(0, roundSize);
+  } else {
+    quiz.pool = buildQuizPool(items, wrongKeys, keyField, Math.min(roundSize, items.length));
+  }
   quiz.index = 0;
   quiz.score = 0;
 
@@ -976,7 +1112,14 @@ function nextQuestion() {
     document.getElementById("quiz-play").hidden = true;
     document.getElementById("quiz-result").hidden = false;
     document.getElementById("quiz-score").textContent = `${quiz.score} / ${quiz.pool.length} 정답!`;
-    recordQuizResult(quiz.type, quiz.score, quiz.pool.length);
+    // A 오답만 풀기 round is drawn entirely from items you already missed, so its
+    // score isn't comparable to a normal round's. It fills today's badge for a
+    // type you haven't taken yet — you did study it — but never overwrites a
+    // fuller round's result with a narrower one.
+    const takenToday = (loadQuizResults()[todayStr()] || {})[quiz.type];
+    if (!quiz.wrongOnly || !takenToday) {
+      recordQuizResult(quiz.type, quiz.score, quiz.pool.length);
+    }
     autoCheckFromQuiz(quiz.type);
   } else {
     renderQuestion();

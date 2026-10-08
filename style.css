@@ -126,6 +126,22 @@ main {
 .quiz-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .quiz-type-btn.done-today { background: var(--good); }
 
+/* 오답 노트, on the 쪽지시험 start screen. Collapsed per type with <details>, so a
+   40-word 한자 queue doesn't bury the quiz buttons it sits under. */
+.wrong-note { margin-top: 18px; border-top: 1px solid var(--border); padding-top: 14px; }
+.wrong-note h3 { margin: 0 0 10px; font-size: 1rem; }
+.wrong-total { color: var(--muted); font-weight: 400; }
+/* No display rule: [hidden] does the hiding (the .quiz-replay trap). */
+.wrong-empty { margin: 0; color: var(--muted); font-size: 0.9rem; line-height: 1.5; }
+.wrong-group { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; }
+/* Wraps on a narrow phone rather than squeezing the button. */
+.wrong-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.wrong-name { font-weight: 600; }
+.wrong-drill { padding: 8px 12px; font-size: 0.9rem; }
+.wrong-detail summary { cursor: pointer; color: var(--muted); font-size: 0.9rem; margin-top: 10px; }
+.wrong-list { margin: 10px 0 0; padding-left: 18px; color: var(--muted); font-size: 0.9rem; line-height: 1.6; }
+.wrong-list li { margin-bottom: 6px; word-break: break-word; }
+
 .quiz-prompt { font-size: 2.6rem; font-weight: 600; margin: 16px 0 4px; white-space: pre-wrap; }
 .quiz-prompt.passage { font-size: 1rem; font-weight: 400; line-height: 1.6; text-align: left; }
 /* 문법 sits between the two: bigger than a passage, far smaller than a lone kanji.
