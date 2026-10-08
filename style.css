@@ -40,6 +40,18 @@ body {
 }
 .topbar h1 { margin: 0 0 4px; font-size: 1.3rem; }
 .dday { margin: 0; color: var(--accent); font-weight: 600; }
+/* Today's line, under the D-day. No display rule — [hidden] does the hiding
+   before the plan starts and after the exam (the .quiz-replay trap). */
+.today-task {
+  margin: 6px auto 0;
+  max-width: 34rem;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  font-size: 0.95rem;
+  line-height: 1.45;
+}
 
 .tabs {
   display: flex;
@@ -123,6 +135,9 @@ main {
   font-size: 0.95rem;
   cursor: pointer;
 }
+/* No display rule: [hidden] hides it outside the plan period. */
+.week-daily { margin: 8px 0 0; color: var(--muted); font-size: 0.9rem; }
+
 .quiz-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .quiz-type-btn.done-today { background: var(--good); }
 

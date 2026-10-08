@@ -181,6 +181,23 @@ async function renderRadicalTab() {
 }
 
 // ---------- Today tab ----------
+const DAY_NAMES = ["일", "월", "화", "수", "목", "금", "토"];
+
+// The day's own line, from the week's `days` array. Stored Monday-first because
+// every week in the plan starts on a Monday and that is how the table reads;
+// Date#getDay() counts from Sunday, hence the shift. Built from the date string
+// the same way todayStr() produces it — local, never toISOString().
+function dayTaskFor(dateStr, week) {
+  if (!week || !Array.isArray(week.days)) return null;
+  const weekday = new Date(`${dateStr}T00:00:00`).getDay();
+  return week.days[(weekday + 6) % 7] || null;
+}
+
+function dayLabel(dateStr) {
+  const [, m, d] = dateStr.split("-");
+  return `${Number(m)}/${Number(d)} (${DAY_NAMES[new Date(`${dateStr}T00:00:00`).getDay()]})`;
+}
+
 function renderToday(plan) {
   const today = todayStr();
   const ddayEl = document.getElementById("dday");
@@ -190,6 +207,7 @@ function renderToday(plan) {
   const week = findWeek(today, plan.weeks);
   const weekTitleEl = document.getElementById("week-title");
   const weekFocusEl = document.getElementById("week-focus");
+  const weekDailyEl = document.getElementById("week-daily");
   if (week) {
     weekTitleEl.textContent = `Week ${week.week} (${week.start} ~ ${week.end})`;
     weekFocusEl.textContent = week.focus;
@@ -200,6 +218,22 @@ function renderToday(plan) {
     weekTitleEl.textContent = "계획 기간 종료";
     weekFocusEl.textContent = "수고하셨습니다!";
   }
+  // The background track that runs under every week, so the week card says it
+  // once instead of all eight focus strings repeating it.
+  weekDailyEl.textContent = plan.dailyBase || "";
+  weekDailyEl.hidden = !week || !plan.dailyBase;
+
+  // 그날 뭘 할지, at the top of every tab.
+  const taskEl = document.getElementById("today-task");
+  const task = dayTaskFor(today, week);
+  if (task) {
+    taskEl.textContent = `${dayLabel(today)} · ${task}`;
+  } else if (today < plan.startDate && plan.preStart) {
+    taskEl.textContent = plan.preStart;
+  } else {
+    taskEl.textContent = "";
+  }
+  taskEl.hidden = !taskEl.textContent;
 
   renderChecklist(today);
   renderStreak(plan);

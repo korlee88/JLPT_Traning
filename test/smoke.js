@@ -1255,6 +1255,86 @@ async function main() {
       await page.close();
     }
 
+    // --- The plan's own shape ---
+    // STUDY_PLAN.md and plan.json are kept in sync by hand, so the parts a
+    // machine *can* check are checked: the weeks have to tile the period with no
+    // gap, start where startDate says, end on the exam, and carry a full week of
+    // day lines — a short `days` array would silently blank the top of the page
+    // on whichever weekday is missing.
+    {
+      const weeks = plan.weeks;
+      assert(weeks.length > 0 && weeks[0].start === plan.startDate,
+        `week 1 starts on startDate (${weeks[0].start} vs ${plan.startDate})`);
+      assert(weeks[weeks.length - 1].end === plan.examDate,
+        `the last week ends on the exam (${weeks[weeks.length - 1].end} vs ${plan.examDate})`);
+      const bad = [];
+      weeks.forEach((w, i) => {
+        if (!Array.isArray(w.days) || w.days.length !== 7) {
+          bad.push(`week ${w.week}: ${Array.isArray(w.days) ? w.days.length : "no"} day lines`);
+        } else if (w.days.some((d) => typeof d !== "string" || !d.trim())) {
+          bad.push(`week ${w.week}: an empty day line`);
+        }
+        if (w.start > w.end) bad.push(`week ${w.week}: starts after it ends`);
+        if (i > 0 && addDaysToDateStr(weeks[i - 1].end, 1) !== w.start) {
+          bad.push(`week ${w.week}: gap after ${weeks[i - 1].end}`);
+        }
+      });
+      assert(bad.length === 0, `the weeks tile the period with 7 day lines each (${bad.join(" | ")})`);
+      assert(Boolean(plan.preStart), "the plan says what to do before it starts");
+      assert(Boolean(plan.dailyBase), "the plan names the daily parallel track");
+    }
+
+    // --- 그날 할 일 shows at the top of the page ---
+    // The day line is indexed Monday-first while Date#getDay() counts from
+    // Sunday, which is exactly the kind of off-by-one that renders the wrong
+    // day's task every day without ever throwing. Checked against the data.
+    {
+      const samples = [plan.weeks[0].start, plan.weeks[0].end, plan.weeks[4].start, plan.examDate];
+      for (const date of samples) {
+        const page = await browser.newPage({ viewport: PHONE });
+        await withFixedDate(page, date);
+        await page.goto(URL, { waitUntil: "networkidle" });
+        await page.waitForSelector("#week-title");
+        const week = plan.weeks.find((w) => date >= w.start && date <= w.end);
+        const weekday = new Date(`${date}T00:00:00`).getDay();
+        const want = week.days[(weekday + 6) % 7];
+        const shown = (await page.textContent("#today-task")).trim();
+        assert(
+          shown.endsWith(`· ${want}`),
+          `${date}: the top line carries that day's task (expected "… · ${want}", got "${shown}")`
+        );
+        const [, m, d] = date.split("-");
+        assert(
+          shown.startsWith(`${Number(m)}/${Number(d)} (`),
+          `${date}: the top line is dated (got "${shown}")`
+        );
+        const daily = (await page.textContent("#week-daily")).trim();
+        assert(daily === plan.dailyBase, `${date}: the week card names the daily track (got "${daily}")`);
+        await page.close();
+      }
+    }
+
+    // --- Outside the plan period the top line says something useful, or nothing ---
+    {
+      const before = await browser.newPage({ viewport: PHONE });
+      await withFixedDate(before, addDaysToDateStr(plan.startDate, -1));
+      await before.goto(URL, { waitUntil: "networkidle" });
+      await before.waitForSelector("#week-title");
+      assert(
+        (await before.textContent("#today-task")).trim() === plan.preStart,
+        "before the plan starts, the top line says when it does"
+      );
+      assert(!(await before.isVisible("#week-daily")), "the daily track line is hidden before the plan starts");
+      await before.close();
+
+      const after = await browser.newPage({ viewport: PHONE });
+      await withFixedDate(after, addDaysToDateStr(plan.examDate, 1));
+      await after.goto(URL, { waitUntil: "networkidle" });
+      await after.waitForSelector("#week-title");
+      assert(!(await after.isVisible("#today-task")), "after the exam the top line is gone, not blank-but-boxed");
+      await after.close();
+    }
+
     // --- Date-boundary logic ---
     const cases = [
       { date: "2000-01-01", expect: (t, d) => t.includes("시작 전") },
