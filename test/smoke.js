@@ -222,14 +222,15 @@ async function main() {
       // in app.js. A round is also capped at the data file's size, which is what
       // used to hold 독해 to 8; reading.json passed 10 entries on 2026-10-05, so
       // every type now runs its full configured length.
+      // Every type is at DEFAULT_ROUND_SIZE; listed one by one anyway so a
+      // per-type override can't be added without this file noticing.
       const EXPECTED_ROUND_SIZE = {
-        "#start-hiragana": 10,
-        "#start-katakana": 10,
-        "#start-loanword": 10,
-        "#start-kanji": 10,
-        "#start-vocab": 10,
-        "#start-grammar": 10,
-        // Short on purpose: one of these questions is several of anyone else's.
+        "#start-hiragana": 5,
+        "#start-katakana": 5,
+        "#start-loanword": 5,
+        "#start-kanji": 5,
+        "#start-vocab": 5,
+        "#start-grammar": 5,
         "#start-reading": 5,
         "#start-listening": 5,
       };
@@ -562,8 +563,12 @@ async function main() {
       await page.click("#start-vocab");
       await page.waitForSelector("#quiz-choices .choice-btn");
 
+      // Read off the page, never hardcoded — this block sat at 10 when the round
+      // became 5 and spent its last iterations clicking a disabled button on the
+      // result screen, a timeout that says nothing about the cause.
+      const roundLen = await page.evaluate(() => quiz.pool.length);
       const missed = [];
-      for (let i = 0; i < 10; i++) {
+      for (let i = 0; i < roundLen; i++) {
         await page.waitForSelector("#quiz-choices .choice-btn");
         const prompt = await page.textContent("#quiz-prompt");
         await page.locator("#quiz-choices .choice-btn").first().click();
@@ -575,7 +580,7 @@ async function main() {
       await page.click("#quiz-retry");
       await page.click("#start-vocab");
       const seen = [];
-      for (let i = 0; i < 10; i++) {
+      for (let i = 0; i < roundLen; i++) {
         await page.waitForSelector("#quiz-choices .choice-btn");
         seen.push(await page.textContent("#quiz-prompt"));
         await page.locator("#quiz-choices .choice-btn").first().click();
@@ -585,7 +590,12 @@ async function main() {
       // asserting one *specific* missed word comes back would be flaky now that
       // random clicking misses more than the cap. The count is exact: fresh items
       // are by definition not in the wrong set, so nothing else can inflate it.
-      const cap = await page.evaluate(() => Math.max(1, Math.round(10 * REVIEW_SHARE)));
+      // floor, matching buildQuizPool — with Math.round an odd round size would
+      // expect 3 of 5 here while the app gives 2.
+      const cap = await page.evaluate(
+        (n) => Math.max(1, Math.floor(n * REVIEW_SHARE)),
+        roundLen
+      );
       const reappeared = seen.filter((w) => missed.includes(w)).length;
       assert(
         reappeared === Math.min(missed.length, cap),
@@ -1139,7 +1149,7 @@ async function main() {
 
       const drillLabels = await page.$$eval(".wrong-drill", (els) => els.map((e) => e.textContent));
       assert(
-        drillLabels.join(" | ") === "오답만 풀기 (2문제) | 오답만 풀기 (10문제)",
+        drillLabels.join(" | ") === "오답만 풀기 (2문제) | 오답만 풀기 (5문제)",
         `the drill button says how long the round will be, capped at the round size (got "${drillLabels.join(" | ")}")`
       );
       await page.close();
@@ -1151,7 +1161,10 @@ async function main() {
       await page.goto(URL, { waitUntil: "networkidle" });
       const seeded = await page.evaluate(async () => {
         const vocab = await fetch("data/n4/vocab.json").then((r) => r.json());
-        const keys = vocab.slice(0, 6).map((e) => e.word);
+        // Exactly a round's worth: the drill is capped at the round size, so a
+        // longer queue could not be emptied in one go and the assertion below
+        // would be testing the cap rather than the leaky bucket.
+        const keys = vocab.slice(0, 5).map((e) => e.word);
         localStorage.setItem("jlpt_wrong_items_n4", JSON.stringify({ vocab: keys }));
         // Today's 단어 result already recorded, from a full round.
         localStorage.setItem(
@@ -1172,12 +1185,12 @@ async function main() {
       }));
       assert(pool.wrongOnly, "the drill round is marked wrongOnly");
       assert(
-        pool.words.length === 6 && pool.words.every((w) => seeded.includes(w)),
+        pool.words.length === 5 && pool.words.every((w) => seeded.includes(w)),
         `every question in the drill comes from the queue (got ${pool.words.length}: ${pool.words.join(", ")})`
       );
       assert(new Set(pool.words).size === pool.words.length, "the drill round never repeats an item");
 
-      // Answer all six right — the queue is a leaky bucket, so it should empty.
+      // Answer all five right — the queue is a leaky bucket, so it should empty.
       for (let i = 0; i < pool.words.length; i++) {
         await page.waitForSelector("#quiz-choices .choice-btn");
         const want = await page.evaluate(() => quiz.pool[quiz.index].meaning);
