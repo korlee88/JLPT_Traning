@@ -21,7 +21,7 @@ const CHECKLIST_AUTO_MAP = [
 ];
 // The field that uniquely identifies an entry within each quiz type's data
 // file, used to track which specific items were answered wrong (see
-// WRONG_ITEMS_KEY / buildQuizPool) so they resurface in later rounds.
+// REVIEW_KEY / buildQuizPool) so they come back on schedule.
 const QUIZ_KEY_FIELD = {
   hiragana: "char",
   katakana: "char",
@@ -32,7 +32,14 @@ const QUIZ_KEY_FIELD = {
   reading: "passage",
   listening: "script",
 };
-const WRONG_ITEMS_KEY = `jlpt_wrong_items_${CURRENT_LEVEL}`;
+const WRONG_ITEMS_KEY = `jlpt_wrong_items_${CURRENT_LEVEL}`; // pre-2026-10-16 queue, migrated once
+const REVIEW_KEY = `jlpt_review_${CURRENT_LEVEL}`;
+// Days until an item comes back, indexed by its Leitner box. Each correct recall
+// moves it one box up; any miss drops it straight back to box 0, due the same day.
+// Six boxes reach 외움 after 0+1+3+7+14 = 25 days of correct recalls, so a word
+// learned today can get there twice over before the exam.
+const REVIEW_INTERVALS = [0, 1, 3, 7, 14, 30];
+const MASTERED_BOX = REVIEW_INTERVALS.length - 1;
 // Questions per round. Five, for every type (2026-10-15). 2026-10-08 took the
 // three 20s down to 10 and 독해/청해 to 5 against "다하기 많네"; a week of the plan
 // put the rest at 5 too. The unit of work is the day — eight quizzes beside the
@@ -51,6 +58,14 @@ function roundSizeFor(type) {
 // How much of a round the review queue may take (see buildQuizPool). Half
 // keeps missed items coming back often without crowding out new material.
 const REVIEW_SHARE = 0.5;
+
+// Local-clock arithmetic on a YYYY-MM-DD string, the same way todayStr() formats
+// one. Never via toISOString(), for the reason stated above it.
+function addDays(dateStr, n) {
+  const d = new Date(`${dateStr}T00:00:00`);
+  d.setDate(d.getDate() + n);
+  return todayStr(d);
+}
 
 function todayStr(d = new Date()) {
   const y = d.getFullYear();
@@ -503,28 +518,46 @@ async function renderWrongNote() {
   const groupsEl = document.getElementById("wrong-groups");
   const emptyEl = document.getElementById("wrong-empty");
   const totalEl = document.getElementById("wrong-total");
-  const store = loadWrongItems();
+  const progressEl = document.getElementById("wrong-progress");
+  const store = loadReview();
+  const today = todayStr();
   groupsEl.innerHTML = "";
   let total = 0;
+  let learningAll = 0;
+  let masteredAll = 0;
   let pruned = false;
 
   // Object.keys(QUIZ_TYPE_LABELS) rather than the store's own key order, so the
   // groups come out in the same order as the quiz buttons above them.
   for (const type of Object.keys(QUIZ_TYPE_LABELS)) {
-    if (!(store[type] || []).length) continue;
+    const schedule = store.types[type];
+    if (!schedule || !Object.keys(schedule).length) continue;
     const entries = await wrongEntriesFor(type);
     const keyField = QUIZ_KEY_FIELD[type];
     const byKey = new Map(entries.map((e) => [e[keyField], e]));
-    // A key whose entry has since left the data file can never be answered
-    // correctly again, so it would sit in the queue forever and make the count
-    // disagree with the list. Dropped here, where the file is already loaded.
-    const keys = store[type].filter((k) => byKey.has(k));
-    if (keys.length !== store[type].length) {
-      store[type] = keys;
-      pruned = true;
+
+    // A key whose entry has since left the data file can never come up again, so
+    // it would sit in the schedule forever and make the counts disagree with the
+    // list. Dropped here, where the file is already loaded.
+    for (const k of Object.keys(schedule)) {
+      if (!byKey.has(k)) {
+        delete schedule[k];
+        pruned = true;
+      }
     }
+    const keys = Object.keys(schedule);
     if (!keys.length) continue;
-    total += keys.length;
+
+    const due = dueKeys(schedule, today);
+    const mastered = keys.filter((k) => schedule[k].box >= MASTERED_BOX).length;
+    const learning = keys.length - mastered;
+    learningAll += learning;
+    masteredAll += mastered;
+    // A card per type with something due *now*. Eight cards reading "오늘 0개"
+    // would bury the one that has work in it; the running totals go in the one
+    // progress line under the heading instead.
+    if (!due.length) continue;
+    total += due.length;
 
     const group = document.createElement("div");
     group.className = "wrong-group";
@@ -537,14 +570,21 @@ async function renderWrongNote() {
     head.className = "wrong-head";
     const name = document.createElement("span");
     name.className = "wrong-name";
-    name.textContent = `${shortTypeLabel(type)} ${keys.length}개`;
+    name.textContent = `${shortTypeLabel(type)} 오늘 ${due.length}개`;
     const drill = document.createElement("button");
     drill.className = "btn wrong-drill";
     drill.dataset.type = type;
-    drill.textContent = `오답만 풀기 (${Math.min(keys.length, roundSizeFor(type))}문제)`;
+    drill.textContent = `오늘 복습 (${Math.min(due.length, roundSizeFor(type))}문제)`;
     drill.addEventListener("click", () => startQuiz(type, { wrongOnly: true }));
     head.append(name, drill);
     group.append(head);
+
+    // What the boxes are actually for: a word is not done the first time you get
+    // it right, and this is where that shows.
+    const sub = document.createElement("p");
+    sub.className = "wrong-sub";
+    sub.textContent = `외우는 중 ${learning}개 · 외움 ${mastered}개`;
+    group.append(sub);
 
     const detail = document.createElement("details");
     detail.className = "wrong-detail";
@@ -554,7 +594,7 @@ async function renderWrongNote() {
     const list = document.createElement("ul");
     list.className = "wrong-list";
     list.lang = "ja";
-    for (const k of keys) {
+    for (const k of due) {
       const li = document.createElement("li");
       li.textContent = reviewLine(type, byKey.get(k));
       list.append(li);
@@ -564,9 +604,13 @@ async function renderWrongNote() {
     groupsEl.append(group);
   }
 
-  if (pruned) saveWrongItems(store);
+  if (pruned) saveReview(store);
   totalEl.textContent = total ? `(${total})` : "";
-  emptyEl.hidden = total > 0;
+  // Shown even on a day with nothing due, because "외움 12개" is the answer to
+  // "am I getting anywhere" and a day off from reviews is not a day of no progress.
+  progressEl.textContent = `외우는 중 ${learningAll}개 · 외움 ${masteredAll}개`;
+  progressEl.hidden = learningAll + masteredAll === 0;
+  emptyEl.hidden = groupsEl.children.length > 0;
 }
 
 // Deduped by value, not just filtered against the answer. Entries can legitimately
@@ -669,53 +713,134 @@ function pickReadingDistractors(items, item) {
     .map((v) => v.reading);
 }
 
-function loadWrongItems() {
+// { version: 1, types: { <quizType>: { <itemKey>: { box, due } } } }
+//
+// Replaces the wrong/not-wrong set this app ran on until 2026-10-16. That set
+// had one defect that no amount of tuning could reach: **a single correct answer
+// retired a word permanently.** In a 4-choice quiz a pure guess is right a
+// quarter of the time, so an item you do not know leaves the queue after four
+// encounters on average — measured over the shipped code, 60 simulated days of
+// guessing retired 29 kanji that way. That is what "반복해서 봐도 잘 안 외워진다"
+// feels like from the inside: the app kept declaring victory on your behalf.
+function loadReview() {
+  let store = null;
   try {
-    return JSON.parse(localStorage.getItem(WRONG_ITEMS_KEY)) || {};
+    store = JSON.parse(localStorage.getItem(REVIEW_KEY));
   } catch {
-    return {};
+    store = null;
+  }
+  if (!store || store.version !== 1 || !store.types) store = { version: 1, types: {} };
+
+  // One-time merge of the pre-2026-10-16 queue. Everything it held was by
+  // definition not yet learned, so it all starts in box 0, due today.
+  // WRONG_ITEMS_KEY is left where it is rather than deleted — it costs nothing
+  // and is the only copy of that history.
+  //
+  // The guard is `store.migrated`, NOT "does a schedule exist yet": an empty
+  // schedule gets written the first time any screen reads one, which on a phone
+  // can easily happen before the legacy key is ever looked at. Keying off
+  // existence meant a real queue could be skipped and silently lost.
+  if (!store.migrated) {
+    let legacy = {};
+    try {
+      legacy = JSON.parse(localStorage.getItem(WRONG_ITEMS_KEY)) || {};
+    } catch {
+      legacy = {};
+    }
+    const today = todayStr();
+    for (const [type, keys] of Object.entries(legacy)) {
+      if (!Array.isArray(keys)) continue;
+      const forType = (store.types[type] = store.types[type] || {});
+      // never knock a real schedule entry back to box 0
+      for (const k of keys) if (!forType[k]) forType[k] = { box: 0, due: today };
+    }
+    store.migrated = true;
+    saveReview(store);
+  }
+  return store;
+}
+
+function saveReview(data) {
+  try {
+    localStorage.setItem(REVIEW_KEY, JSON.stringify(data));
+  } catch {
+    /* localStorage unavailable — the schedule just won't persist */
   }
 }
 
-function saveWrongItems(data) {
-  try {
-    localStorage.setItem(WRONG_ITEMS_KEY, JSON.stringify(data));
-  } catch {
-    /* localStorage unavailable — wrong-answer tracking just won't persist */
-  }
-}
-
-// Marks an item right or wrong for a quiz type. Wrong items stay flagged
-// (so they resurface in later rounds via buildQuizPool) until answered
-// correctly, at which point they're cleared — a simple leaky-bucket review
-// queue, not full spaced repetition with intervals.
+// Moves an item through the boxes. Right: up one, and the next sighting is
+// REVIEW_INTERVALS[box] days out. Wrong: straight back to box 0, due today.
+// A first correct answer lands in box 1 (tomorrow) rather than retiring the
+// item — which is the whole change.
 function recordAnswerOutcome(type, itemKey, correct) {
   if (!itemKey) return;
-  const data = loadWrongItems();
-  const set = new Set(data[type] || []);
-  if (correct) set.delete(itemKey);
-  else set.add(itemKey);
-  data[type] = [...set];
-  saveWrongItems(data);
+  const store = loadReview();
+  const forType = (store.types[type] = store.types[type] || {});
+  const prev = forType[itemKey];
+  const box = correct ? Math.min((prev ? prev.box : 0) + 1, MASTERED_BOX) : 0;
+  forType[itemKey] = { box, due: addDays(todayStr(), REVIEW_INTERVALS[box]) };
+  saveReview(store);
 }
 
-// Fills a quiz round by mixing review items with fresh ones. Wrong items keep
-// coming back until mastered, but only up to REVIEW_SHARE of the round: the
-// first version took `size` of them, so once the queue held a full round's
-// worth, every round was 100% review and a word added today could not come up
-// until every earlier mistake was cleared. Whichever side runs out, the other
-// tops the round back up, so the round is never short when the file can fill it.
-function buildQuizPool(items, wrongKeys, keyField, size) {
-  if (!keyField || wrongKeys.length === 0) return shuffle(items).slice(0, size);
-  const wrongItems = shuffle(items.filter((v) => wrongKeys.includes(v[keyField])));
-  const otherItems = shuffle(items.filter((v) => !wrongKeys.includes(v[keyField])));
-  // floor, not round: at a round of 5 (독해/청해) rounding would hand review 3 of
-  // the 5 slots, which is more than half — the exact thing REVIEW_SHARE is here to
+// The keys of `schedule` that are due today or overdue, most overdue first and
+// then lowest box — the words you keep missing come before the ones merely
+// scheduled for today.
+function dueKeys(schedule, today = todayStr()) {
+  return Object.keys(schedule)
+    .filter((k) => schedule[k].due <= today)
+    .sort((a, b) => {
+      const x = schedule[a];
+      const y = schedule[b];
+      return x.due === y.due ? x.box - y.box : x.due < y.due ? -1 : 1;
+    });
+}
+
+// Fills a round: whatever the schedule says is due, up to REVIEW_SHARE of it,
+// then material you have never been asked. The cap is the old lesson and still
+// holds — the first version took `size` review items, so once the queue held a
+// round's worth every round was 100% review and a word added today could not
+// come up until every earlier mistake cleared.
+//
+// What the schedule adds is the other half of that: an item that is scheduled
+// but **not due yet** is deliberately skipped. Pulling it early is exactly what
+// spacing exists to avoid, and before this the app had no way to express
+// "ask me about this one on Thursday".
+function buildQuizPool(items, keyField, size, schedule = {}) {
+  if (!keyField) return shuffle(items).slice(0, size);
+  const today = todayStr();
+  const due = [];
+  const notDue = [];
+  const unseen = [];
+  for (const v of items) {
+    const entry = schedule[v[keyField]];
+    if (!entry) unseen.push(v);
+    else if (entry.due <= today) due.push(v);
+    else notDue.push({ v, due: entry.due });
+  }
+  const order = dueKeys(schedule, today);
+  const rank = new Map(order.map((k, i) => [k, i]));
+  due.sort((a, b) => rank.get(a[keyField]) - rank.get(b[keyField]));
+  notDue.sort((a, b) => (a.due < b.due ? -1 : 1));
+
+  // floor, not round: at a round of 5 rounding would hand review 3 of the 5
+  // slots, which is more than half — the exact thing REVIEW_SHARE is here to
   // bound. Even round sizes come out the same either way.
   const reviewCap = Math.max(1, Math.floor(size * REVIEW_SHARE));
-  const pool = wrongItems.slice(0, reviewCap);
-  pool.push(...otherItems.slice(0, size - pool.length));
-  if (pool.length < size) pool.push(...wrongItems.slice(reviewCap, reviewCap + size - pool.length));
+  const pool = due.slice(0, reviewCap);
+  for (const v of shuffle(unseen)) {
+    if (pool.length >= size) break;
+    pool.push(v);
+  }
+  // Only once the file cannot fill the round: overflow review, then items whose
+  // day has not come. A short round would be worse than either.
+  for (const v of due.slice(reviewCap)) {
+    if (pool.length >= size) break;
+    pool.push(v);
+  }
+  for (const x of notDue) {
+    if (pool.length >= size) break;
+    pool.push(x.v);
+  }
   return shuffle(pool);
 }
 
@@ -810,9 +935,10 @@ function relatedWordLines(word) {
   return lines;
 }
 
-// `wrongOnly` runs a round drawn entirely from the 오답 노트 — still capped at the
-// type's round length, since the point of it is a short targeted session. A normal
-// round mixes review with fresh material instead (buildQuizPool).
+// `wrongOnly` runs a round drawn entirely from what the schedule says is due
+// today — still capped at the type's round length, since the point of it is a
+// short targeted session. A normal round mixes review with fresh material
+// instead (buildQuizPool).
 async function startQuiz(type, { wrongOnly = false } = {}) {
   const res = await fetch(`data/${CURRENT_LEVEL}/${type}.json`);
   const items = await res.json();
@@ -820,11 +946,11 @@ async function startQuiz(type, { wrongOnly = false } = {}) {
   quiz.type = type;
   quiz.allItems = items;
   const keyField = QUIZ_KEY_FIELD[type];
-  const wrongKeys = loadWrongItems()[type] || [];
+  const schedule = loadReview().types[type] || {};
   const roundSize = roundSizeFor(type);
   quiz.wrongOnly = wrongOnly;
   if (wrongOnly) {
-    const queued = new Set(wrongKeys);
+    const queued = new Set(dueKeys(schedule));
     const only = items.filter((v) => queued.has(v[keyField]));
     // Cleared between opening the note and tapping the button: nothing to drill,
     // so repaint the note instead of starting an empty round.
@@ -834,7 +960,7 @@ async function startQuiz(type, { wrongOnly = false } = {}) {
     }
     quiz.pool = shuffle(only).slice(0, roundSize);
   } else {
-    quiz.pool = buildQuizPool(items, wrongKeys, keyField, Math.min(roundSize, items.length));
+    quiz.pool = buildQuizPool(items, keyField, Math.min(roundSize, items.length), schedule);
   }
   quiz.index = 0;
   quiz.score = 0;

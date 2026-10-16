@@ -47,6 +47,20 @@ async function clickChoice(page, text) {
   await page.locator("#quiz-choices .choice-btn").nth(i).click();
 }
 
+// The Leitner box an item sits in, or null when the schedule has never seen it.
+// Box 0 means "missed, due today"; any box above 0 means a correct recall was
+// credited and the next sighting is days out.
+async function boxOf(page, type, key) {
+  return page.evaluate(
+    ([t, k]) => {
+      const raw = JSON.parse(localStorage.getItem("jlpt_review_n4") || "null");
+      const e = raw && raw.types && raw.types[t] && raw.types[t][k];
+      return e ? e.box : null;
+    },
+    [type, key]
+  );
+}
+
 // Headless Chromium has the Web Speech API but no voice, so what the app says can
 // only be checked by intercepting it. Records every utterance instead of speaking
 // it; must run before page.goto.
@@ -726,10 +740,10 @@ async function main() {
       const vocabShown = (await page.textContent("#quiz-reveal")).trim();
       assert(vocabShown === item.reading, `vocab reading reveals on tap (got "${vocabShown}", expected "${item.reading}")`);
       await clickChoice(page, item.meaning);
-      const vocabQueued = await page.evaluate(() => JSON.parse(localStorage.getItem("jlpt_wrong_items_n4") || "{}").vocab || []);
+      const vocabBox = await boxOf(page, "vocab", item.word);
       assert(
-        !vocabQueued.includes(item.word),
-        `a peeked vocab reading still counts as recall when answered right (${item.word} not in [${vocabQueued.join(", ")}])`
+        vocabBox !== null && vocabBox > 0,
+        `a peeked vocab reading still counts as recall when answered right (${item.word} is in box ${vocabBox}, expected above 0)`
       );
       await page.close();
     }
@@ -749,11 +763,16 @@ async function main() {
       // Answer it correctly — without the peek this would clear it from review.
       await clickChoice(page, peeked.reading);
 
-      const queued = await page.evaluate(() => JSON.parse(localStorage.getItem("jlpt_wrong_items_n4") || "{}").kanji || []);
+      const peekedBox = await boxOf(page, "kanji", peeked.word);
       assert(
-        queued.includes(peeked.word),
-        `a peeked kanji stays in the review queue even when answered right (${peeked.word} in [${queued.join(", ")}])`
+        peekedBox === 0,
+        `a peeked kanji is not credited even when answered right (${peeked.word} is in box ${peekedBox}, expected 0)`
       );
+      const peekedDue = await page.evaluate(
+        (k) => JSON.parse(localStorage.getItem("jlpt_review_n4")).types.kanji[k].due === todayStr(),
+        peeked.word
+      );
+      assert(peekedDue, `a peeked kanji is due again today (${peeked.word})`);
       await page.close();
     }
 
@@ -921,12 +940,10 @@ async function main() {
       // Reading a word is not the 독해 answer, so the peek is free — the same rule
       // that penalizes the 한자 quiz's reading peek and spares the 단어 quiz's.
       await clickChoice(page, item.answer);
-      const queued = await page.evaluate(
-        () => JSON.parse(localStorage.getItem("jlpt_wrong_items_n4") || "{}").reading || []
-      );
+      const readingBox = await boxOf(page, "reading", item.passage);
       assert(
-        !queued.includes(item.passage),
-        `a tapped reading still counts as recall when answered right (passage not in the review queue)`
+        readingBox !== null && readingBox > 0,
+        `a tapped reading still counts as recall when answered right (box ${readingBox}, expected above 0)`
       );
       await page.close();
     }
@@ -1144,11 +1161,12 @@ async function main() {
     // groups match the store, the lines match what the page itself formats, and a
     // key whose entry has left the data file is dropped rather than counted.
     {
-      const page = await browser.newPage({ viewport: PHONE });
+      let page = await browser.newPage({ viewport: PHONE });
       await page.goto(URL, { waitUntil: "networkidle" });
       await page.click('.tab-btn[data-tab="quiz"]');
       await page.waitForSelector("#wrong-note");
-      assert(await page.isVisible("#wrong-empty"), "오답 노트 says so while nothing is queued");
+      assert(await page.isVisible("#wrong-empty"), "복습 노트 says so while nothing is scheduled");
+      assert(!(await page.isVisible("#wrong-progress")), "no progress line before anything is scheduled");
       assert(
         (await page.textContent("#wrong-total")).trim() === "",
         "no count badge on an empty queue"
@@ -1158,38 +1176,81 @@ async function main() {
       // Seeded the way wrong answers would leave it, plus one key whose entry is
       // gone — that one can never be answered right again, so it has to be pruned
       // or it inflates the count forever.
-      const STALE = "存在しない語";
-      const seeded = await page.evaluate(async (stale) => {
-        const kanji = await fetch("data/n4/kanji.json").then((r) => r.json());
-        const vocab = await fetch("data/n4/vocab.json").then((r) => r.json());
-        const kanjiKeys = kanji.slice(0, 12).map((e) => e.word);
-        const vocabKeys = vocab.slice(0, 2).map((e) => e.word);
-        localStorage.setItem(
-          "jlpt_wrong_items_n4",
-          JSON.stringify({ kanji: [...kanjiKeys, stale], vocab: vocabKeys })
-        );
-        return { kanjiKeys, vocabKeys };
-      }, STALE);
+      await page.close();
 
-      await page.reload({ waitUntil: "networkidle" });
+      // A fresh page, with the OLD key already in place before any script runs —
+      // which is how a phone that has been using the app meets this change.
+      const STALE = "存在しない語";
+      const seeded = await (async () => {
+        const probe = await browser.newPage({ viewport: PHONE });
+        await probe.goto(URL, { waitUntil: "networkidle" });
+        const keys = await probe.evaluate(async () => {
+          const kanji = await fetch("data/n4/kanji.json").then((r) => r.json());
+          const vocab = await fetch("data/n4/vocab.json").then((r) => r.json());
+          return {
+            kanjiKeys: kanji.slice(0, 12).map((e) => e.word),
+            vocabKeys: vocab.slice(0, 2).map((e) => e.word),
+          };
+        });
+        await probe.close();
+        return keys;
+      })();
+      page = await browser.newPage({ viewport: PHONE });
+      await page.addInitScript(
+        ([k, v, stale]) => {
+          localStorage.setItem(
+            "jlpt_wrong_items_n4",
+            JSON.stringify({ kanji: [...k, stale], vocab: v })
+          );
+        },
+        [seeded.kanjiKeys, seeded.vocabKeys, STALE]
+      );
+      await page.goto(URL, { waitUntil: "networkidle" });
       await page.click('.tab-btn[data-tab="quiz"]');
       await page.waitForFunction(() => document.querySelectorAll(".wrong-group").length === 2);
 
       const summaries = await page.$$eval(".wrong-name", (els) => els.map((e) => e.textContent));
       assert(
-        summaries.join(" | ") === "단어 2개 | 한자 12개",
+        summaries.join(" | ") === "단어 오늘 2개 | 한자 오늘 12개",
         `the note groups by type in the quiz buttons' order (got "${summaries.join(" | ")}")`
       );
       const totalBadge = (await page.textContent("#wrong-total")).trim();
       assert(totalBadge === "(14)", `the heading counts every queued item (got "${totalBadge}")`);
       assert(!(await page.isVisible("#wrong-empty")), "the empty line is gone once something is queued");
 
-      const stored = await page.evaluate(
-        () => JSON.parse(localStorage.getItem("jlpt_wrong_items_n4")).kanji
+      // Seeding the OLD key also exercises the one-time migration: everything the
+      // leaky-bucket queue held was by definition not learned, so it lands in box
+      // 0 due today — which is why all 12 show as due above.
+      const migrated = await page.evaluate(() => {
+        const raw = JSON.parse(localStorage.getItem("jlpt_review_n4"));
+        const kanji = raw.types.kanji;
+        return {
+          version: raw.version,
+          keys: Object.keys(kanji),
+          boxes: [...new Set(Object.values(kanji).map((e) => e.box))],
+          dues: [...new Set(Object.values(kanji).map((e) => e.due))],
+          today: todayStr(),
+        };
+      });
+      assert(migrated.version === 1, `the schedule is written at version 1 (got ${migrated.version})`);
+      assert(
+        !migrated.keys.includes(STALE) && migrated.keys.length === 12,
+        `a key with no entry left in the data file is pruned from the schedule (got ${migrated.keys.length} keys)`
       );
       assert(
-        !stored.includes(STALE) && stored.length === 12,
-        `a key with no entry left in the data file is pruned from the queue (got ${stored.length} keys)`
+        migrated.boxes.join() === "0" && migrated.dues.join() === migrated.today,
+        `the old wrong-answer queue migrates into box 0, due today (boxes ${migrated.boxes}, dues ${migrated.dues})`
+      );
+
+      const progress = (await page.textContent("#wrong-progress")).trim();
+      assert(
+        progress === "외우는 중 14개 · 외움 0개",
+        `the progress line counts everything scheduled, not just what is due (got "${progress}")`
+      );
+      const subs = await page.$$eval(".wrong-sub", (els) => els.map((e) => e.textContent));
+      assert(
+        subs.join(" | ") === "외우는 중 2개 · 외움 0개 | 외우는 중 12개 · 외움 0개",
+        `each card says how far along that type is (got "${subs.join(" | ")}")`
       );
 
       // The lines are asked of the page, not reimplemented here — the word-shaped
@@ -1216,13 +1277,13 @@ async function main() {
 
       const drillLabels = await page.$$eval(".wrong-drill", (els) => els.map((e) => e.textContent));
       assert(
-        drillLabels.join(" | ") === "오답만 풀기 (2문제) | 오답만 풀기 (5문제)",
+        drillLabels.join(" | ") === "오늘 복습 (2문제) | 오늘 복습 (5문제)",
         `the drill button says how long the round will be, capped at the round size (got "${drillLabels.join(" | ")}")`
       );
       await page.close();
     }
 
-    // --- 오답만 풀기 drills the queue and empties it ---
+    // --- 오늘 복습 drills what is due, and a right answer pushes it out ---
     {
       const page = await browser.newPage({ viewport: PHONE });
       await page.goto(URL, { waitUntil: "networkidle" });
@@ -1257,7 +1318,9 @@ async function main() {
       );
       assert(new Set(pool.words).size === pool.words.length, "the drill round never repeats an item");
 
-      // Answer all five right — the queue is a leaky bucket, so it should empty.
+      // Answer all five right. Under the old leaky bucket this retired them for
+      // good; now each moves to box 1, due tomorrow — so today's list empties
+      // while the words stay scheduled.
       for (let i = 0; i < pool.words.length; i++) {
         await page.waitForSelector("#quiz-choices .choice-btn");
         const want = await page.evaluate(() => quiz.pool[quiz.index].meaning);
@@ -1267,7 +1330,27 @@ async function main() {
       await page.waitForSelector("#quiz-result:not([hidden])");
       await page.click("#quiz-retry");
       await page.waitForFunction(() => document.querySelectorAll(".wrong-group").length === 0);
-      assert(await page.isVisible("#wrong-empty"), "answering the queue right empties the 오답 노트");
+      assert(await page.isVisible("#wrong-empty"), "answering everything due empties today's 복습 노트");
+
+      // The point of the whole change: right once is not done.
+      const after = await page.evaluate(() => {
+        const t = JSON.parse(localStorage.getItem("jlpt_review_n4")).types.vocab;
+        return {
+          boxes: [...new Set(Object.values(t).map((e) => e.box))],
+          dues: [...new Set(Object.values(t).map((e) => e.due))],
+          tomorrow: addDays(todayStr(), 1),
+          count: Object.keys(t).length,
+        };
+      });
+      assert(
+        after.count === 5 && after.boxes.join() === "1" && after.dues.join() === after.tomorrow,
+        `a correct answer schedules the word again instead of retiring it (${after.count} words, boxes ${after.boxes}, due ${after.dues} vs tomorrow ${after.tomorrow})`
+      );
+      const stillShown = (await page.textContent("#wrong-progress")).trim();
+      assert(
+        stillShown === "외우는 중 5개 · 외움 0개",
+        `the progress line still counts them while nothing is due (got "${stillShown}")`
+      );
 
       // The badge is "today's 쪽지시험": a 6-item drill of items you already missed
       // must not overwrite a full round's score.
@@ -1291,25 +1374,44 @@ async function main() {
       await page.goto(URL, { waitUntil: "networkidle" });
       const pools = await page.evaluate(() => {
         const items = Array.from({ length: 40 }, (_, i) => ({ word: `w${i}` }));
-        // A queue twice the size of a round — the case that used to make every
-        // round 100% review, so a word added today could never be drawn.
+        // Due twice over a round — the case that used to make every round 100%
+        // review, so a word added today could never be drawn.
         const wrong = items.slice(0, 20).map((v) => v.word);
-        const run = (wrongKeys, size, pickFrom = items) =>
-          buildQuizPool(pickFrom, wrongKeys, "word", size);
+        const dueToday = Object.fromEntries(wrong.map((k) => [k, { box: 0, due: todayStr() }]));
+        const run = (schedule, size, pickFrom = items) =>
+          buildQuizPool(pickFrom, "word", size, schedule);
         return {
           share: REVIEW_SHARE,
-          bigQueue: run(wrong, 10).map((v) => v.word),
-          // 독해/청해 run 5 — the size where rounding the cap would quietly push
-          // review past half the round.
-          shortRound: run(wrong, 5).map((v) => v.word),
+          bigQueue: run(dueToday, 10).map((v) => v.word),
+          // a round of 5 is where rounding the cap would quietly push review
+          // past half the round.
+          shortRound: run(dueToday, 5).map((v) => v.word),
           // Nothing fresh left to pull: review spills past the cap rather than
           // leaving the round short.
-          nothingFresh: run(wrong.slice(0, 8), 8, items.slice(0, 8)).map((v) => v.word),
+          nothingFresh: run(
+            Object.fromEntries(wrong.slice(0, 8).map((k) => [k, { box: 0, due: todayStr() }])),
+            8,
+            items.slice(0, 8)
+          ).map((v) => v.word),
+          // Scheduled but not due: skipped entirely while unseen material is
+          // left, which is the whole point of spacing.
+          notDueSkipped: run(
+            Object.fromEntries(items.slice(0, 20).map((v) => [v.word, { box: 3, due: "2099-01-01" }])),
+            10
+          ).map((v) => v.word),
           wrong,
         };
       });
       const cap = Math.max(1, Math.floor(10 * pools.share));
       const shortCap = Math.max(1, Math.floor(5 * pools.share));
+      // 20 of the 40 are scheduled far in the future; a round of 10 must come
+      // entirely from the other 20. Pulling a not-yet-due item early is exactly
+      // what the schedule exists to prevent.
+      const early = pools.notDueSkipped.filter((w) => pools.wrong.includes(w)).length;
+      assert(
+        pools.notDueSkipped.length === 10 && early === 0,
+        `an item scheduled for later is not pulled early while unseen material is left (${early} came early)`
+      );
       const reviewed = pools.bigQueue.filter((w) => pools.wrong.includes(w)).length;
       assert(
         pools.bigQueue.length === 10,
