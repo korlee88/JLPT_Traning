@@ -920,6 +920,7 @@ function renderQuestion() {
 
   const promptEl = document.getElementById("quiz-prompt");
   const hintEl = document.getElementById("quiz-hint");
+  const hintKoEl = document.getElementById("quiz-hint-ko");
   const replaysEl = document.getElementById("quiz-replays");
   const revealEl = document.getElementById("quiz-reveal");
   const meaningEl = document.getElementById("quiz-meaning");
@@ -931,6 +932,8 @@ function renderQuestion() {
   meaningEl.hidden = true;
   meaningEl.classList.remove("revealed");
   meaningEl.onclick = null;
+  hintKoEl.hidden = true;
+  hintKoEl.textContent = "";
   quiz.peeked = false;
   quiz.replays = 0;
   quiz.slowReplays = 0;
@@ -987,6 +990,15 @@ function renderQuestion() {
     promptEl.classList.add("passage");
     renderRubyPassage(promptEl, item, revealEl);
     hintEl.textContent = item.question;
+    // Shown outright rather than behind a tap, unlike the 한자 quiz's 뜻 힌트:
+    // the question is not what 독해 tests — the passage is — and a question you
+    // cannot read stops the exercise before it starts (2026-10-16, "한자가
+    // 어렵구만"). The furigana on the passage does not reach this line, since
+    // `ruby` covers the passage only.
+    if (item.questionTranslation) {
+      hintKoEl.textContent = item.questionTranslation;
+      hintKoEl.hidden = false;
+    }
     choices = shuffle(item.choices);
     answer = item.answer;
   } else {
