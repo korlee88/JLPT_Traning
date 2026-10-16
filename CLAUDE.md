@@ -57,11 +57,12 @@ kanji.json      [{ word, reading, meaning }]            same shape, quiz asks fo
 grammar.json    [{ sentence, meaning, choices: [4 strings], answer, note }]
                   `sentence` carries furigana as 漢字（かな）and one ＿＿＿ blank;
                   `choices` are bare suffixes that attach where the blank sits
-reading.json    [{ passage, ruby, translation, question, choices: [4 strings],
-                     answer, note }]
+reading.json    [{ passage, ruby, translation, question, questionTranslation,
+                     choices: [4 strings], answer, note }]
                   `ruby` is the same text with 漢字（かな）furigana; stripping the
                   annotations must reproduce `passage` exactly (a test checks it).
-                  `translation` is the passage in Korean, shown after answering
+                  `translation` is the passage in Korean, shown after answering;
+                  `questionTranslation` is the question in Korean, shown with it
 listening.json  [{ script, meaning, choices: [3] }]     quiz speaks `script` via Web Speech API;
                                                           `choices` are 3 authored near-misses of `meaning`
 radical.json    { "<부수>": { name, sense, chars: [..] } }  hand-verified 부수 groups; no quiz of
@@ -120,6 +121,8 @@ The 단어 quiz got the same line on 2026-10-01 — the owner wants to read the 
 - **Authored per passage, not derived — and that is forced, not lazy.** A kanji's reading depends on the word it sits in: 行きます is い but 行います is おこな, 時 is とき but 時間 is じ, 分 is ふん but 30分 is ぷん. Deriving a per-character reading would teach wrong readings on a majority of taps, which is the worst failure mode for a study tool. Measured before building: matching whole kanji runs against `kanji.json` + `vocab.json` covered only **27%** of the runs in the passages, and the gap was exactly the common single characters (私 ×38, 行 ×38, 人 ×37, 時 ×34). That is why it is hand-written: **1,291 annotated words across all 90 passages**, every kanji covered.
 - **The passage text is not duplicated.** `passage` stays the display text and the wrong-answer queue's key; `ruby` is the only other copy, and `test/smoke.js` asserts `stripRuby(ruby) === passage` for every entry plus that no kanji is left outside an annotation. That is the machine-checked version of the "two views kept in sync by hand" trap this file warns about elsewhere — here it cannot drift silently. It earned its place immediately: the check caught a Cyrillic `ую` typed for 用意's ようい during authoring.
 - A new passage without `ruby` still renders (plain text, no taps), so the feature degrades rather than breaking — but the test requires all 90, so write the furigana when adding one.
+
+**The 독해 question carries its own Korean line, and it is not behind a tap.** Added 2026-10-16 ("한자가 어렵구만"). The furigana covers the passage only — `ruby` is the passage's annotated copy — so the question line underneath it stayed unreadable, and a question you cannot read stops the exercise before it starts. Each entry has `questionTranslation`, rendered into `#quiz-hint-ko` directly under the Japanese question, muted and a size down so the Japanese still leads. **Unlike the 한자 quiz's 뜻 힌트 it is shown outright**, because 독해 tests whether you got the answer out of the *passage*; the question is the instruction, not the thing being tested. `test/smoke.js` asserts all 90 have one, that no Japanese survives in it (the one exception is the entry whose question quotes 「それ」), that no two entries share a translation — which is what a copy-paste onto the wrong entry looks like — and that the line never appears on another quiz type.
 
 **The post-answer note opens with the passage in Korean.** Asked for on 2026-10-07, right after the furigana: the readings get you *through* the passage, but you could still finish a question without knowing what it actually said. `explanationFor` joins `번역: <translation>` and the existing `note` with a blank line, so the translation comes first and the reasoning follows. `translation` is a required field in practice — `test/smoke.js` asserts every entry has one, that no Japanese characters are left in it, and that the rendered note carries both pieces in that order. The note roughly doubled in length, so the 다음-on-screen sweep matters more than before; all 90 still pass at 390×844 (worst case y=820).
 

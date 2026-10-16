@@ -788,6 +788,73 @@ async function main() {
       await page.close();
     }
 
+    // --- 독해 questions carry a Korean translation, shown with the question ---
+    // The furigana only covers the passage (`ruby`), so the question line stayed
+    // unreadable and stopped the exercise before it started. Unlike the 한자
+    // quiz's 뜻 힌트 this is not behind a tap: the question is not what 독해 tests.
+    {
+      const page = await browser.newPage({ viewport: PHONE });
+      await page.goto(URL, { waitUntil: "networkidle" });
+      const q = await page.evaluate(async () => {
+        const all = await fetch("data/n4/reading.json").then((x) => x.json());
+        const bad = [];
+        for (const e of all) {
+          const head = e.question.slice(0, 14);
+          if (!e.questionTranslation || !e.questionTranslation.trim()) {
+            bad.push(`${head}: no translation`);
+            continue;
+          }
+          // 「それ」 quotes the Japanese word the question is about; every other
+          // translation has to be free of Japanese, the bar `translation` clears.
+          const ja = /[\u3040-\u30FF\u4E00-\u9FFF]/.test(e.questionTranslation);
+          if (ja && !e.questionTranslation.includes("それ")) {
+            bad.push(`${head}: Japanese left in the translation`);
+          }
+        }
+        const uniq = new Set(all.map((e) => e.questionTranslation));
+        return { total: all.length, bad, uniq: uniq.size };
+      });
+      assert(
+        q.bad.length === 0,
+        `every 독해 question has a Korean translation with no Japanese left in it (${q.bad.length} bad of ${q.total}: ${q.bad.slice(0, 3).join(" | ")})`
+      );
+      assert(
+        q.uniq === q.total,
+        `no two questions share a translation, which would mean one was pasted onto the wrong entry (${q.uniq} distinct of ${q.total})`
+      );
+
+      await page.click('.tab-btn[data-tab="quiz"]');
+      await page.click("#start-reading");
+      await page.waitForSelector("#quiz-choices .choice-btn");
+      const item = await page.evaluate(() => quiz.pool[quiz.index]);
+      assert(
+        (await page.textContent("#quiz-hint")).trim() === item.question,
+        "the Japanese question still leads"
+      );
+      assert(
+        (await page.textContent("#quiz-hint-ko")).trim() === item.questionTranslation,
+        `the Korean question shows under it (expected "${item.questionTranslation}")`
+      );
+      assert(await page.isVisible("#quiz-hint-ko"), "the Korean question is visible before answering");
+      await page.close();
+    }
+
+    // --- The Korean question line belongs to 독해 alone ---
+    {
+      for (const type of ["kanji", "grammar", "listening"]) {
+        const page = await browser.newPage({ viewport: PHONE });
+        await page.goto(URL, { waitUntil: "networkidle" });
+        await page.click('.tab-btn[data-tab="quiz"]');
+        await page.click(`#start-${type}`);
+        await page.waitForSelector("#quiz-choices .choice-btn");
+        assert(
+          !(await page.isVisible("#quiz-hint-ko")),
+          `${type}: no Korean question line`
+        );
+        await page.close();
+      }
+    }
+
     // --- 독해 furigana: the annotated copy must never drift from the passage ---
     // `ruby` carries the same text with 漢字（かな）, and the app strips the
     // annotations to render. If the two ever diverge the passage silently changes,

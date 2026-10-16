@@ -188,6 +188,10 @@ main {
    a gap below it — scroll-margin is exactly what scrollIntoView honours. */
 #quiz-next { scroll-margin-bottom: 24px; }
 .quiz-hint { color: var(--muted); margin: 0 0 12px; }
+/* Pulled up against the Japanese question so the two read as one pair rather
+   than two separate lines. No display rule: [hidden] keeps it off every other
+   quiz type (the .quiz-replay trap). */
+.quiz-hint-ko { color: var(--muted); font-size: 0.85rem; margin: -8px 0 12px; line-height: 1.5; }
 .quiz-choices { display: grid; gap: 8px; }
 .choice-btn {
   padding: 12px;
