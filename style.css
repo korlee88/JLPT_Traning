@@ -153,6 +153,9 @@ main {
 .wrong-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
 .wrong-name { font-weight: 600; }
 .wrong-drill { padding: 8px 12px; font-size: 0.9rem; }
+/* No display rule: [hidden] hides it before anything is scheduled. */
+.wrong-progress { margin: 0 0 10px; color: var(--muted); font-size: 0.9rem; }
+.wrong-sub { margin: 8px 0 0; color: var(--muted); font-size: 0.85rem; }
 .wrong-detail summary { cursor: pointer; color: var(--muted); font-size: 0.9rem; margin-top: 10px; }
 .wrong-list { margin: 10px 0 0; padding-left: 18px; color: var(--muted); font-size: 0.9rem; line-height: 1.6; }
 .wrong-list li { margin-bottom: 6px; word-break: break-word; }
