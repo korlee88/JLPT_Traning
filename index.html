@@ -16,33 +16,16 @@
     <p id="today-task" class="today-task" hidden></p>
   </header>
 
+  <!-- Two tabs. 오늘 체크 and 전체 계획 were removed on 2026-10-17: four days of
+       use and the owner called them "쓸대없는 모니터". What they were for — the
+       day's task and the D-day — is in the topbar above, on every screen. -->
   <nav class="tabs">
-    <button class="tab-btn active" data-tab="today">오늘 체크</button>
-    <button class="tab-btn" data-tab="quiz">쪽지시험</button>
-    <button class="tab-btn" data-tab="plan">전체 계획</button>
+    <button class="tab-btn active" data-tab="quiz">쪽지시험</button>
     <button class="tab-btn" data-tab="radical">한자 기초</button>
   </nav>
 
   <main>
-    <section id="tab-today" class="tab-panel active">
-      <div class="card" id="week-card">
-        <h2 id="week-title">이번 주</h2>
-        <p id="week-focus"></p>
-        <p id="week-daily" class="week-daily" hidden></p>
-      </div>
-
-      <div class="card">
-        <h2>오늘 체크리스트</h2>
-        <ul id="checklist"></ul>
-      </div>
-
-      <div class="card">
-        <h2>최근 14일</h2>
-        <div id="streak" class="streak"></div>
-      </div>
-    </section>
-
-    <section id="tab-quiz" class="tab-panel">
+    <section id="tab-quiz" class="tab-panel active">
       <div class="card">
         <h2>쪽지시험</h2>
         <div id="quiz-start">
@@ -91,15 +74,6 @@
       </div>
     </section>
 
-    <section id="tab-plan" class="tab-panel">
-      <div class="card">
-        <h2>12주 전체 계획</h2>
-        <table id="plan-table">
-          <thead><tr><th>주차</th><th>기간</th><th>초점</th></tr></thead>
-          <tbody></tbody>
-        </table>
-      </div>
-    </section>
     <section id="tab-radical" class="tab-panel">
       <div class="card">
         <h2>부수로 묶어 보기</h2>

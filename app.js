@@ -1,6 +1,4 @@
 const CURRENT_LEVEL = "n4"; // active JLPT level; see data/levels.json. Switch this (and eventually add a picker) once a new level's data/<level>/ folder exists.
-const CHECKLIST_ITEMS = ["단어·한자 학습/복습", "문법·진도 학습", "청해 연습", "전날 내용 복습"];
-const STORAGE_KEY = `jlpt_daily_checklist_${CURRENT_LEVEL}`;
 const QUIZ_RESULTS_KEY = `jlpt_quiz_results_${CURRENT_LEVEL}`;
 const QUIZ_TYPE_LABELS = {
   hiragana: "히라가나 쪽지시험",
@@ -12,13 +10,6 @@ const QUIZ_TYPE_LABELS = {
   reading: "독해 쪽지시험",
   listening: "청해 쪽지시험",
 };
-// Which CHECKLIST_ITEMS index each quiz type's completion auto-checks (see
-// autoCheckFromQuiz). Index 3 ("전날 내용 복습") has no quiz proxy and stays manual.
-const CHECKLIST_AUTO_MAP = [
-  { index: 0, quizTypes: ["hiragana", "katakana", "loanword", "vocab", "kanji"] },
-  { index: 1, quizTypes: ["grammar", "reading"] },
-  { index: 2, quizTypes: ["listening"] },
-];
 // The field that uniquely identifies an entry within each quiz type's data
 // file, used to track which specific items were answered wrong (see
 // REVIEW_KEY / buildQuizPool) so they come back on schedule.
@@ -74,21 +65,7 @@ function todayStr(d = new Date()) {
   return `${y}-${m}-${day}`;
 }
 
-function loadChecklist() {
-  try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {};
-  } catch {
-    return {};
-  }
-}
 
-function saveChecklist(data) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-  } catch {
-    /* localStorage unavailable (private mode etc.) — progress just won't persist */
-  }
-}
 
 function findWeek(dateStr, weeks) {
   return weeks.find((w) => dateStr >= w.start && dateStr <= w.end) || null;
@@ -215,32 +192,17 @@ function dayLabel(dateStr) {
   return `${Number(m)}/${Number(d)} (${DAY_NAMES[new Date(`${dateStr}T00:00:00`).getDay()]})`;
 }
 
-function renderToday(plan) {
+// The topbar: D-day, and what to do today. The 오늘 체크 and 전체 계획 tabs this
+// used to fill were removed on 2026-10-17 — the owner had been looking at them
+// for four days and called them "쓸대없는 모니터". The plan itself stays in
+// plan.json, because this one line is the part of it that was being read.
+function renderTopbar(plan) {
   const today = todayStr();
   const ddayEl = document.getElementById("dday");
   const diff = daysUntil(plan.examDate);
   ddayEl.textContent = diff > 0 ? `시험까지 D-${diff}` : diff === 0 ? "오늘이 시험일입니다!" : "시험이 종료되었습니다";
 
   const week = findWeek(today, plan.weeks);
-  const weekTitleEl = document.getElementById("week-title");
-  const weekFocusEl = document.getElementById("week-focus");
-  const weekDailyEl = document.getElementById("week-daily");
-  if (week) {
-    weekTitleEl.textContent = `Week ${week.week} (${week.start} ~ ${week.end})`;
-    weekFocusEl.textContent = week.focus;
-  } else if (today < plan.startDate) {
-    weekTitleEl.textContent = "학습 시작 전";
-    weekFocusEl.textContent = `${plan.startDate}부터 계획이 시작됩니다.`;
-  } else {
-    weekTitleEl.textContent = "계획 기간 종료";
-    weekFocusEl.textContent = "수고하셨습니다!";
-  }
-  // The background track that runs under every week, so the week card says it
-  // once instead of all eight focus strings repeating it.
-  weekDailyEl.textContent = plan.dailyBase || "";
-  weekDailyEl.hidden = !week || !plan.dailyBase;
-
-  // 그날 뭘 할지, at the top of every tab.
   const taskEl = document.getElementById("today-task");
   const task = dayTaskFor(today, week);
   if (task) {
@@ -251,74 +213,6 @@ function renderToday(plan) {
     taskEl.textContent = "";
   }
   taskEl.hidden = !taskEl.textContent;
-
-  renderChecklist(today);
-  renderStreak(plan);
-}
-
-function renderChecklist(today) {
-  const data = loadChecklist();
-  const todayState = data[today] || CHECKLIST_ITEMS.map(() => false);
-  const ul = document.getElementById("checklist");
-  ul.innerHTML = "";
-  CHECKLIST_ITEMS.forEach((label, i) => {
-    const li = document.createElement("li");
-    const id = `check-${i}`;
-    li.className = todayState[i] ? "done" : "";
-    li.innerHTML = `<input type="checkbox" id="${id}" ${todayState[i] ? "checked" : ""} /><label for="${id}">${label}</label>`;
-    li.querySelector("input").addEventListener("change", (e) => {
-      const d = loadChecklist();
-      const arr = d[today] || CHECKLIST_ITEMS.map(() => false);
-      arr[i] = e.target.checked;
-      d[today] = arr;
-      saveChecklist(d);
-      li.className = e.target.checked ? "done" : "";
-      renderStreakFromCache();
-    });
-    ul.appendChild(li);
-  });
-}
-
-let _planCache = null;
-function renderStreakFromCache() {
-  if (_planCache) renderStreak(_planCache);
-}
-
-function renderStreak(plan) {
-  _planCache = plan;
-  const data = loadChecklist();
-  const container = document.getElementById("streak");
-  container.innerHTML = "";
-  const today = new Date();
-  for (let i = 13; i >= 0; i--) {
-    const d = new Date(today);
-    d.setDate(d.getDate() - i);
-    const key = todayStr(d);
-    const state = data[key];
-    const div = document.createElement("div");
-    let cls = "day";
-    if (state) {
-      const doneCount = state.filter(Boolean).length;
-      if (doneCount === CHECKLIST_ITEMS.length) cls += " done";
-      else if (doneCount > 0) cls += " partial";
-    }
-    if (i === 0) cls += " today";
-    div.className = cls;
-    div.title = key;
-    div.textContent = String(d.getDate());
-    container.appendChild(div);
-  }
-}
-
-// ---------- Plan tab ----------
-function renderPlanTable(plan) {
-  const tbody = document.querySelector("#plan-table tbody");
-  tbody.innerHTML = "";
-  plan.weeks.forEach((w) => {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${w.week}</td><td>${w.start}~${w.end}</td><td>${w.focus}</td>`;
-    tbody.appendChild(tr);
-  });
 }
 
 // ---------- Quiz tab ----------
@@ -433,27 +327,6 @@ function recordQuizResult(type, score, total) {
   saveQuizResults(data);
 }
 
-// Ticks any 오늘 체크리스트 item mapped (via CHECKLIST_AUTO_MAP) to this quiz
-// type, so finishing a quiz counts as having done that checklist item today.
-// Never unchecks anything — only fills in items still unchecked.
-function autoCheckFromQuiz(type) {
-  const today = todayStr();
-  const data = loadChecklist();
-  const arr = data[today] || CHECKLIST_ITEMS.map(() => false);
-  let changed = false;
-  CHECKLIST_AUTO_MAP.forEach(({ index, quizTypes }) => {
-    if (quizTypes.includes(type) && !arr[index]) {
-      arr[index] = true;
-      changed = true;
-    }
-  });
-  if (changed) {
-    data[today] = arr;
-    saveChecklist(data);
-    renderChecklist(today);
-    renderStreakFromCache();
-  }
-}
 
 // Marks each quiz-type button with today's result (✓ + score), if it's been
 // taken today. Resets naturally at midnight since it's keyed by todayStr().
@@ -786,8 +659,16 @@ function recordAnswerOutcome(type, itemKey, correct) {
 // then lowest box — the words you keep missing come before the ones merely
 // scheduled for today.
 function dueKeys(schedule, today = todayStr()) {
-  return Object.keys(schedule)
-    .filter((k) => schedule[k].due <= today)
+  // Shuffled BEFORE the sort, which Array#sort then preserves because it is
+  // stable: priority still decides across different (due, box) pairs, and ties
+  // come out in a fresh order every call.
+  //
+  // Without the shuffle this returned Object.keys order, and after the migration
+  // every item was (box 0, due today) — one single tie covering the whole queue.
+  // The round's two review slots therefore served the same two words every day,
+  // for ever, which is exactly what "매일같은게 보임" was (2026-10-17). The bug
+  // was mine, from the day before.
+  return shuffle(Object.keys(schedule).filter((k) => schedule[k].due <= today))
     .sort((a, b) => {
       const x = schedule[a];
       const y = schedule[b];
@@ -849,8 +730,11 @@ function buildQuizPool(items, keyField, size, schedule = {}) {
 // it worth having: measured over the current data it lifts the share of questions
 // that can show anything from 54% to 59% for 한자, and 23% to 39% for 단어.
 const XREF_TYPES = ["kanji", "vocab"];
+// Types that want the word index for a tap gloss but not the xref note itself.
+const GLOSS_TYPES = ["reading"];
 const XREF_SOURCES = ["kanji", "vocab"];
 let _xrefIndex = null; // char -> [{ word, reading, meaning }], built once per page load
+let _wordIndex = null; // word -> { word, reading, meaning }, from the same files
 let _radicalIndex = null; // char -> { rad, name, sense, siblings[] }
 
 const CJK = /[\u4E00-\u9FFF]/gu;
@@ -861,17 +745,32 @@ async function buildXrefIndex() {
     XREF_SOURCES.map((t) => fetch(`data/${CURRENT_LEVEL}/${t}.json`).then((r) => r.json()))
   );
   const index = new Map();
+  const words = new Map();
   const seen = new Set();
   for (const item of files.flat()) {
     if (seen.has(item.word)) continue; // a word in both files is one entry here
     seen.add(item.word);
+    words.set(item.word, item);
     for (const c of new Set(item.word.match(CJK) || [])) {
       if (!index.has(c)) index.set(c, []);
       index.get(c).push({ word: item.word, reading: item.reading, meaning: item.meaning });
     }
   }
   _xrefIndex = index;
+  _wordIndex = words;
   return index;
+}
+
+// The Korean meaning of a tapped word, when the data already knows that exact
+// word. **Exact match only, deliberately.** The misses are single characters
+// mid-inflection (痛 out of 痛かった, 行 out of 行きます), and guessing a
+// dictionary form to look up would eventually attach the wrong meaning to a
+// character — 行く vs 行う is the same trap the per-passage furigana exists to
+// avoid, and a wrong fact in a study tool is worse than a missing one. Where
+// there is no match the reading alone still shows, so the tap is never dead.
+function glossFor(word) {
+  const hit = _wordIndex && _wordIndex.get(word);
+  return hit ? hit.meaning : null;
 }
 
 // data/<level>/radical.json is a hand-verified table, not a derived one. The IDS
@@ -943,6 +842,9 @@ async function startQuiz(type, { wrongOnly = false } = {}) {
   const res = await fetch(`data/${CURRENT_LEVEL}/${type}.json`);
   const items = await res.json();
   if (XREF_TYPES.includes(type)) await Promise.all([buildXrefIndex(), buildRadicalIndex()]);
+  // 독해 doesn't use the cross-reference note, but its tap-to-read line shows a
+  // meaning when the word index has one, and that index rides along with it.
+  else if (GLOSS_TYPES.includes(type)) await buildXrefIndex();
   quiz.type = type;
   quiz.allItems = items;
   const keyField = QUIZ_KEY_FIELD[type];
@@ -1016,7 +918,8 @@ function renderRubyPassage(promptEl, item, revealEl) {
     return;
   }
   const show = (word, reading) => {
-    revealEl.textContent = `${word} → ${reading}`;
+    const gloss = glossFor(word);
+    revealEl.textContent = gloss ? `${word} → ${reading} · ${gloss}` : `${word} → ${reading}`;
     revealEl.classList.add("revealed");
     revealEl.hidden = false;
   };
@@ -1031,8 +934,9 @@ function renderRubyPassage(promptEl, item, revealEl) {
     last = m.index + m[0].length;
   }
   promptEl.append(item.ruby.slice(last));
-  revealEl.textContent = "한자를 누르면 읽는 법";
-  revealEl.hidden = false;
+  // No cue line: the owner knows the words are tappable (2026-10-17, "이건 내가
+  // 알고 있으니 삭제해줘") and the dotted underline says it anyway. The line
+  // stays hidden until something is actually tapped.
 }
 
 function renderQuestion() {
@@ -1294,7 +1198,6 @@ function nextQuestion() {
     if (!quiz.wrongOnly || !takenToday) {
       recordQuizResult(quiz.type, quiz.score, quiz.pool.length);
     }
-    autoCheckFromQuiz(quiz.type);
   } else {
     renderQuestion();
   }
@@ -1306,8 +1209,7 @@ async function init() {
   setupQuiz();
   const res = await fetch(`data/${CURRENT_LEVEL}/plan.json`);
   const plan = await res.json();
-  renderToday(plan);
-  renderPlanTable(plan);
+  renderTopbar(plan);
 }
 
 init();

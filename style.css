@@ -94,38 +94,6 @@ main {
 }
 .card h2 { margin: 0 0 8px; font-size: 1.05rem; }
 
-#checklist { list-style: none; margin: 0; padding: 0; }
-#checklist li {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 0;
-  border-bottom: 1px solid var(--border);
-}
-#checklist li:last-child { border-bottom: none; }
-#checklist input { width: 20px; height: 20px; }
-#checklist label { flex: 1; }
-#checklist li.done label { color: var(--muted); text-decoration: line-through; }
-
-.streak {
-  display: grid;
-  grid-template-columns: repeat(7, 1fr);
-  gap: 6px;
-}
-.streak .day {
-  aspect-ratio: 1;
-  border-radius: 6px;
-  background: var(--border);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.65rem;
-  color: var(--muted);
-}
-.streak .day.partial { background: #e6c96b; color: #3a2f00; }
-.streak .day.done { background: var(--good); color: #fff; }
-.streak .day.today { outline: 2px solid var(--accent); outline-offset: 1px; }
-
 .btn {
   padding: 10px 16px;
   border-radius: 10px;
@@ -136,7 +104,6 @@ main {
   cursor: pointer;
 }
 /* No display rule: [hidden] hides it outside the plan period. */
-.week-daily { margin: 8px 0 0; color: var(--muted); font-size: 0.9rem; }
 
 .quiz-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .quiz-type-btn.done-today { background: var(--good); }
@@ -220,10 +187,6 @@ main {
   border: 1px solid var(--accent);
 }
 .quiz-note { margin-top: 12px; color: var(--muted); font-size: 0.9rem; white-space: pre-line; }
-
-table#plan-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
-#plan-table th, #plan-table td { text-align: left; padding: 8px 4px; border-bottom: 1px solid var(--border); vertical-align: top; }
-#plan-table th { color: var(--muted); font-weight: 600; }
 
 .buildstamp { text-align: center; color: var(--muted); font-size: 0.72rem; padding: 16px 0 24px; }
 
