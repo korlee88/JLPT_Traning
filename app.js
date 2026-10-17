@@ -760,11 +760,12 @@ function buildQuizPool(items, keyField, size, schedule = {}) {
 // it worth having: measured over the current data it lifts the share of questions
 // that can show anything from 54% to 59% for 한자, and 23% to 39% for 단어.
 const XREF_TYPES = ["kanji", "vocab"];
-// Types that want the word index for a tap gloss but not the xref note itself.
-const GLOSS_TYPES = ["reading"];
+// Types that want the tap glossary but not the xref note itself.
+const GLOSS_TYPES = ["reading", "grammar"];
 const XREF_SOURCES = ["kanji", "vocab"];
 let _xrefIndex = null; // char -> [{ word, reading, meaning }], built once per page load
 let _wordIndex = null; // word -> { word, reading, meaning }, from the same files
+let _gloss = null; // run -> { reading -> Korean }, the authored tap glossary
 let _radicalIndex = null; // char -> { rad, name, sense, siblings[] }
 
 const CJK = /[\u4E00-\u9FFF]/gu;
@@ -791,14 +792,27 @@ async function buildXrefIndex() {
   return index;
 }
 
-// The Korean meaning of a tapped word, when the data already knows that exact
-// word. **Exact match only, deliberately.** The misses are single characters
-// mid-inflection (痛 out of 痛かった, 行 out of 行きます), and guessing a
-// dictionary form to look up would eventually attach the wrong meaning to a
-// character — 行く vs 行う is the same trap the per-passage furigana exists to
-// avoid, and a wrong fact in a study tool is worse than a missing one. Where
-// there is no match the reading alone still shows, so the tap is never dead.
-function glossFor(word) {
+async function buildGloss() {
+  if (_gloss) return _gloss;
+  _gloss = await fetch(`data/${CURRENT_LEVEL}/gloss.json`).then((r) => r.json());
+  return _gloss;
+}
+
+// The Korean meaning of a tapped kanji run.
+//
+// **Keyed by run AND reading**, because the reading is what settles which word
+// you are looking at: 行（い） is 가다 and 行（おこな） is 행하다, 分（ぷん） is
+// 분 and 分（わ） is 알다. 20 of the runs in the data carry two or three
+// readings like that, so a run-only key would have printed a wrong meaning on
+// every one of them — the same trap the per-passage furigana exists to avoid.
+//
+// gloss.json is authored for exactly the runs the two files cannot supply; the
+// word index covers the rest (会社, 来週, 毎朝…), so neither is duplicated.
+// Falls back to null, and the reading alone still shows, if a new passage adds
+// a run nobody has glossed yet.
+function glossFor(word, reading) {
+  const byReading = _gloss && _gloss[word];
+  if (byReading && byReading[reading]) return byReading[reading];
   const hit = _wordIndex && _wordIndex.get(word);
   return hit ? hit.meaning : null;
 }
@@ -872,9 +886,9 @@ async function startQuiz(type, { wrongOnly = false } = {}) {
   const res = await fetch(`data/${CURRENT_LEVEL}/${type}.json`);
   const items = await res.json();
   if (XREF_TYPES.includes(type)) await Promise.all([buildXrefIndex(), buildRadicalIndex()]);
-  // 독해 doesn't use the cross-reference note, but its tap-to-read line shows a
-  // meaning when the word index has one, and that index rides along with it.
-  else if (GLOSS_TYPES.includes(type)) await buildXrefIndex();
+  // 독해/문법 don't use the cross-reference note, but their tapped words show a
+  // meaning, which needs both the authored glossary and the word index.
+  else if (GLOSS_TYPES.includes(type)) await Promise.all([buildXrefIndex(), buildGloss()]);
   quiz.type = type;
   quiz.allItems = items;
   const keyField = QUIZ_KEY_FIELD[type];
@@ -948,7 +962,7 @@ function renderRubyPassage(promptEl, item, revealEl) {
     return;
   }
   const show = (word, reading) => {
-    const gloss = glossFor(word);
+    const gloss = glossFor(word, reading);
     revealEl.textContent = gloss ? `${word} → ${reading} · ${gloss}` : `${word} → ${reading}`;
     revealEl.classList.add("revealed");
     revealEl.hidden = false;
@@ -967,6 +981,32 @@ function renderRubyPassage(promptEl, item, revealEl) {
   // No cue line: the owner knows the words are tappable (2026-10-17, "이건 내가
   // 알고 있으니 삭제해줘") and the dotted underline says it anyway. The line
   // stays hidden until something is actually tapped.
+}
+
+// The 문법 sentence, with every 漢字（かな）run tappable for its meaning. Unlike
+// 독해 the furigana stays *visible* — it is the only reading support that
+// sentence has — so the span keeps the parens and the tap adds the Korean.
+// Asked for on 2026-10-17 ("문법(숙어)도 누르면 뭔지 알려줘"); it had to wait for
+// gloss.json, because matching the runs against kanji.json/vocab.json alone
+// reached 15% of them and most taps would have done nothing.
+function renderGlossedSentence(promptEl, sentence, revealEl) {
+  promptEl.textContent = "";
+  let last = 0;
+  for (const m of sentence.matchAll(RUBY)) {
+    if (m.index > last) promptEl.append(sentence.slice(last, m.index));
+    const span = document.createElement("span");
+    span.className = "ruby-word";
+    span.textContent = m[0];
+    span.onclick = () => {
+      const gloss = glossFor(m[1], m[2]);
+      revealEl.textContent = gloss ? `${m[1]} → ${m[2]} · ${gloss}` : `${m[1]} → ${m[2]}`;
+      revealEl.classList.add("revealed");
+      revealEl.hidden = false;
+    };
+    promptEl.append(span);
+    last = m.index + m[0].length;
+  }
+  promptEl.append(sentence.slice(last));
 }
 
 function renderQuestion() {
@@ -1042,7 +1082,7 @@ function renderQuestion() {
     answer = item.reading;
   } else if (quiz.type === "grammar") {
     promptEl.classList.add("sentence");
-    promptEl.textContent = item.sentence;
+    renderGlossedSentence(promptEl, item.sentence, revealEl);
     hintEl.textContent = item.meaning;
     choices = shuffle(item.choices);
     answer = item.answer;
