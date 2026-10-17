@@ -114,7 +114,11 @@ let _radicalTabRendered = false;
 async function renderRadicalTab() {
   if (_radicalTabRendered) return;
   const container = document.getElementById("radical-groups");
-  const [, xref] = await Promise.all([buildRadicalIndex(), buildXrefIndex()]);
+  const [, xref, chars] = await Promise.all([
+    buildRadicalIndex(),
+    buildXrefIndex(),
+    fetch(`data/${CURRENT_LEVEL}/kanjichar.json`).then((r) => r.json()),
+  ]);
   const groups = new Map();
   for (const [char, g] of _radicalIndex) {
     if (!groups.has(g.rad)) groups.set(g.rad, { name: g.name, sense: g.sense, base: g.base, chars: [] });
@@ -141,37 +145,63 @@ async function renderRadicalTab() {
     name.textContent = `${g.name} · ${g.sense} · ${g.chars.length}자`;
     head.append(glyph, name);
 
-    const row = document.createElement("div");
-    row.className = "radical-chars";
-    row.lang = "ja";
-    const words = document.createElement("p");
-    words.className = "radical-words";
-    words.lang = "ja";
-    words.hidden = true;
+    const list = document.createElement("ul");
+    list.className = "kanji-list";
 
     for (const c of g.chars) {
-      const btn = document.createElement("button");
-      btn.className = "radical-char";
-      btn.textContent = c;
-      btn.onclick = () => {
-        const wasOpen = btn.classList.contains("open");
-        row.querySelectorAll(".radical-char.open").forEach((b) => b.classList.remove("open"));
-        if (wasOpen) {
-          words.hidden = true;
-          return;
-        }
-        btn.classList.add("open");
-        const found = (xref.get(c) || []).map(labelFor);
-        words.textContent = found.length ? `${c} — ${found.join(", ")}` : `${c} — 아직 이 글자가 쓰인 단어가 없습니다`;
-        words.hidden = false;
-      };
-      row.append(btn);
+      const entry = chars[c] || {};
+      const row = document.createElement("li");
+      row.className = "kanji-row";
+      row.dataset.char = c;
+
+      const big = document.createElement("button");
+      big.className = "kanji-glyph";
+      big.lang = "ja";
+      big.textContent = c;
+
+      const body = document.createElement("div");
+      body.className = "kanji-body";
+      const sense = document.createElement("p");
+      sense.className = "kanji-sense";
+      sense.textContent = entry.meaning || "";
+      const note = document.createElement("p");
+      note.className = "kanji-note";
+      note.lang = "ja";
+      note.textContent = entry.note || "";
+      const words = document.createElement("p");
+      words.className = "kanji-words";
+      words.lang = "ja";
+      const found = (xref.get(c) || []).map(labelFor);
+      words.textContent = found.length ? found.join(", ") : "아직 이 글자가 쓰인 단어가 없습니다";
+      body.append(sense, note, words);
+
+      // One tap opens the whole row: the words it appears in, and — in 가리기
+      // mode — the meaning and the note that are covered until then. Two
+      // different things behind one tap would be two things to remember.
+      big.onclick = () => row.classList.toggle("open");
+      row.append(big, body);
+      list.append(row);
     }
 
-    card.append(head, row, words);
+    card.append(head, list);
     container.append(card);
   }
   _radicalTabRendered = true;
+}
+
+// 가리기: hide every meaning and note, so the tab doubles as a flashcard deck —
+// glyph first, tap to check. Asked for on 2026-10-17 ("약간 시험처럼 해도 좋고").
+// No score and no schedule: the 쪽지시험 side already owns that, and a second
+// scoring system over the same characters would be two records of one thing.
+function setupRadicalMask() {
+  const btn = document.getElementById("radical-mask");
+  const groups = document.getElementById("radical-groups");
+  btn.addEventListener("click", () => {
+    const masked = groups.classList.toggle("masked");
+    btn.textContent = masked ? "👀 뜻 보기" : "🙈 뜻 가리고 외우기";
+    // Leaving rows open would defeat the cover the moment it goes on.
+    if (masked) groups.querySelectorAll(".kanji-row.open").forEach((r) => r.classList.remove("open"));
+  });
 }
 
 // ---------- Today tab ----------
@@ -1207,6 +1237,7 @@ function nextQuestion() {
 async function init() {
   setupTabs();
   setupQuiz();
+  setupRadicalMask();
   const res = await fetch(`data/${CURRENT_LEVEL}/plan.json`);
   const plan = await res.json();
   renderTopbar(plan);

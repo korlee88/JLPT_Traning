@@ -619,38 +619,108 @@ async function main() {
       }
       // Japanese text is marked lang="ja" so the browser picks Japanese glyph
       // shapes rather than the page's lang="ko" Korean ones.
-      for (const sel of [".radical-glyph", ".radical-chars", ".radical-words"]) {
+      for (const sel of [".radical-glyph", ".kanji-glyph", ".kanji-note", ".kanji-words"]) {
         const tagged = await page.$$eval(sel, (els) => els.every((e) => e.lang === "ja"));
         assert(tagged, `${sel} is marked lang="ja"`);
       }
       const expectedGroups = Object.keys(groups).length;
       const expectedChars = Object.values(groups).reduce((n, g) => n + g.chars.length, 0);
       const cards = await page.$$eval("#radical-groups .card", (e) => e.length);
-      const chips = await page.$$eval(".radical-char", (e) => e.map((b) => b.textContent));
+      const glyphs = await page.$$eval(".kanji-glyph", (e) => e.map((b) => b.textContent));
       assert(cards === expectedGroups, `한자 기초 renders one card per radical group (got ${cards}, expected ${expectedGroups})`);
-      assert(chips.length === expectedChars, `한자 기초 renders every group member (got ${chips.length}, expected ${expectedChars})`);
+      assert(glyphs.length === expectedChars, `한자 기초 renders every group member (got ${glyphs.length}, expected ${expectedChars})`);
       assert(
-        chips.every((c) => Object.values(groups).some((g) => g.chars.includes(c))),
-        "every chip is a character radical.json actually lists"
+        glyphs.every((c) => Object.values(groups).some((g) => g.chars.includes(c))),
+        "every glyph is a character radical.json actually lists"
       );
 
-      // Tapping a character shows the words it appears in, from the xref index.
-      const probe = chips.find((c) => c === "港") || chips[0];
-      await page.locator(".radical-char", { hasText: probe }).first().click();
-      const shown = (await page.locator(".radical-words:visible").first().textContent()).trim();
-      assert(shown.startsWith(`${probe} —`), `tapping ${probe} shows the words it appears in (got "${shown}")`);
+      // Every character carries its 뜻 and what it is built from, straight from
+      // kanjichar.json — checked against the file, not against hardcoded text.
+      const chars = JSON.parse(fs.readFileSync(path.join(ROOT, "data/n4/kanjichar.json"), "utf8"));
+      const rendered = await page.$$eval(".kanji-row", (rows) =>
+        rows.map((r) => ({
+          char: r.dataset.char,
+          sense: r.querySelector(".kanji-sense").textContent.trim(),
+          note: r.querySelector(".kanji-note").textContent.trim(),
+        }))
+      );
+      const badRow = rendered.find(
+        (r) => !chars[r.char] || r.sense !== chars[r.char].meaning || r.note !== chars[r.char].note
+      );
+      assert(
+        !badRow,
+        `every character shows its 뜻 and composition note from the data (first mismatch: ${JSON.stringify(badRow)})`
+      );
+
+      // Tapping a character opens the words it appears in.
+      const probe = glyphs.includes("港") ? "港" : glyphs[0];
+      const rowFor = (c) => page.locator(`.kanji-row[data-char="${c}"]`);
+      await rowFor(probe).locator(".kanji-glyph").click();
+      const shown = (await rowFor(probe).locator(".kanji-words").textContent()).trim();
+      assert(await rowFor(probe).locator(".kanji-words").isVisible(), `tapping ${probe} opens its word list`);
       assert(
         /\([\u3040-\u309F]/.test(shown),
         `한자 기초 word list carries readings, not just meanings (got "${shown}")`
       );
-      // Tapping the same chip again closes it.
-      await page.locator(".radical-char", { hasText: probe }).first().click();
+      // Tapping the same glyph again closes it.
+      await rowFor(probe).locator(".kanji-glyph").click();
       assert(
-        (await page.locator(".radical-words:visible").count()) === 0,
+        !(await rowFor(probe).locator(".kanji-words").isVisible()),
         "tapping the same character again closes the word list"
       );
+
+      // 가리기: the flashcard side of the tab.
+      const sense0 = page.locator(".kanji-row").first().locator(".kanji-sense");
+      assert(await sense0.isVisible(), "the 뜻 is visible before 가리기 is turned on");
+      await page.click("#radical-mask");
+      assert(!(await sense0.isVisible()), "가리기 covers the 뜻");
+      assert(
+        (await page.textContent("#radical-mask")).includes("뜻 보기"),
+        "the button says how to turn 가리기 back off"
+      );
+      await page.locator(".kanji-row").first().locator(".kanji-glyph").click();
+      assert(await sense0.isVisible(), "tapping a covered character turns that one card over");
+      const stillCovered = page.locator(".kanji-row").nth(1).locator(".kanji-sense");
+      assert(!(await stillCovered.isVisible()), "the rest stay covered");
+      await page.click("#radical-mask");
+      assert(await stillCovered.isVisible(), "turning 가리기 off shows everything again");
       assert(errs.length === 0, `한자 기초 tab renders with no console errors (got ${JSON.stringify(errs)})`);
       await page.close();
+    }
+
+    // --- kanjichar.json covers radical.json exactly ---
+    // The tab renders one row per character in radical.json; a character with no
+    // entry would render a blank 뜻 and a blank note rather than fail, so the
+    // coverage is checked here instead of waiting to be noticed on screen.
+    {
+      const groups = JSON.parse(fs.readFileSync(path.join(ROOT, "data/n4/radical.json"), "utf8"));
+      const chars = JSON.parse(fs.readFileSync(path.join(ROOT, "data/n4/kanjichar.json"), "utf8"));
+      const listed = Object.values(groups).flatMap((g) => g.chars);
+      const missing = listed.filter((c) => !chars[c]);
+      const extra = Object.keys(chars).filter((c) => !listed.includes(c));
+      assert(missing.length === 0, `every 부수 group member has a 뜻 and a note (missing: ${missing.join(" ")})`);
+      assert(extra.length === 0, `no entry for a character the groups don't list (extra: ${extra.join(" ")})`);
+      const thin = Object.entries(chars).filter(
+        ([, e]) => !e.meaning || !e.meaning.trim() || !e.note || e.note.length < 10
+      );
+      assert(thin.length === 0, `no placeholder entries (thin: ${thin.map(([c]) => c).join(" ")})`);
+      // Two characters sharing a 뜻 means one was pasted onto the wrong row.
+      const senses = Object.values(chars).map((e) => e.meaning);
+      assert(
+        new Set(senses).size === senses.length,
+        `no two characters share a 뜻 (${senses.length - new Set(senses).size} duplicated)`
+      );
+      // A note earns its place by saying either what the character is built from
+      // (a component named with its gloss, so a paren) or what shape it draws —
+      // the radicals themselves and the pictographs are the second kind. A note
+      // that does neither is a restatement of the 뜻, which teaches nothing.
+      const noParts = Object.entries(chars).filter(
+        ([, e]) => !/[(（]/.test(e.note) && !e.note.includes("모양")
+      );
+      assert(
+        noParts.length === 0,
+        `every note names a component or describes the shape (bare: ${noParts.map(([c]) => c).join(" ")})`
+      );
     }
 
     // --- The radical line, on a word chosen to have one ---
