@@ -978,7 +978,7 @@ async function main() {
 
       const first = await page.evaluate(() => {
         const m = [...quiz.pool[quiz.index].ruby.matchAll(/([\u4E00-\u9FFF]+)（([\u3040-\u309F]+)）/gu)][0];
-        return { word: m[1], reading: m[2], gloss: glossFor(m[1]) };
+        return { word: m[1], reading: m[2], gloss: glossFor(m[1], m[2]) };
       });
       await page.locator("#quiz-prompt .ruby-word").first().click();
       const revealed = (await page.textContent("#quiz-reveal")).trim();
@@ -1018,17 +1018,17 @@ async function main() {
         const RE = /([\u4E00-\u9FFF]+)（([\u3040-\u309F]+)）/gu;
         for (const e of all) {
           for (const m of e.ruby.matchAll(RE)) {
-            if (glossFor(m[1])) {
+            if (glossFor(m[1], m[2])) {
               quiz.pool = [e];
               quiz.index = 0;
               renderQuestion();
-              return { word: m[1], reading: m[2], gloss: glossFor(m[1]) };
+              return { word: m[1], reading: m[2], gloss: glossFor(m[1], m[2]) };
             }
           }
         }
         return null;
       });
-      assert(picked, "at least one 독해 word is one the data carries outright");
+      assert(picked, "at least one 독해 word resolves to a meaning");
       const idx = await page.evaluate(
         (w) => [...document.querySelectorAll("#quiz-prompt .ruby-word")].findIndex((s) => s.textContent === w),
         picked.word
@@ -1039,6 +1039,107 @@ async function main() {
         line === `${picked.word} → ${picked.reading} · ${picked.gloss}`,
         `the tap line carries reading and meaning (expected "${picked.word} → ${picked.reading} · ${picked.gloss}", got "${line}")`
       );
+      await page.close();
+    }
+
+    // --- Every tappable run in 독해 and 문법 resolves to a meaning ---
+    // The tap used to answer with a reading and nothing else on 83% of 독해 runs,
+    // which from the owner's side looked like the feature had not shipped at all
+    // (2026-10-17). gloss.json closes that, and the gap can only stay closed if
+    // the whole corpus is checked rather than whichever run a round draws.
+    {
+      const page = await browser.newPage({ viewport: PHONE });
+      await page.goto(URL, { waitUntil: "networkidle" });
+      const cover = await page.evaluate(async () => {
+        await Promise.all([buildXrefIndex(), buildGloss()]);
+        const RE = /([\u4E00-\u9FFF]+)（([\u3040-\u309F]+)）/gu;
+        const out = { reading: { total: 0, bad: [] }, grammar: { total: 0, bad: [] } };
+        const walk = async (file, field, bucket) => {
+          const all = await fetch(`data/n4/${file}`).then((r) => r.json());
+          for (const e of all) {
+            for (const m of e[field].matchAll(RE)) {
+              out[bucket].total++;
+              if (!glossFor(m[1], m[2])) out[bucket].bad.push(`${m[1]}（${m[2]}）`);
+            }
+          }
+        };
+        await walk("reading.json", "ruby", "reading");
+        await walk("grammar.json", "sentence", "grammar");
+        return out;
+      });
+      for (const [kind, r] of Object.entries(cover)) {
+        assert(
+          r.bad.length === 0,
+          `every tappable ${kind} run has a meaning (${r.bad.length} of ${r.total} without: ${[...new Set(r.bad)].slice(0, 6).join(" ")})`
+        );
+        assert(r.total > 200, `${kind} really has runs to check (got ${r.total})`);
+      }
+      await page.close();
+    }
+
+    // --- A run with two readings gets the meaning of the right one ---
+    // 行（い）is 가다 and 行（おこな）is 행하다; keying the glossary by the run
+    // alone would have printed one of those on both.
+    {
+      const page = await browser.newPage({ viewport: PHONE });
+      await page.goto(URL, { waitUntil: "networkidle" });
+      const split = await page.evaluate(async () => {
+        const gloss = await buildGloss();
+        await buildXrefIndex();
+        const multi = Object.entries(gloss).filter(([, m]) => Object.keys(m).length > 1);
+        return {
+          count: multi.length,
+          sample: multi.slice(0, 3).map(([run, m]) => ({ run, readings: m })),
+          iku: glossFor("行", "い"),
+          okonau: glossFor("行", "おこな"),
+        };
+      });
+      assert(split.count >= 15, `the glossary distinguishes readings on many runs (got ${split.count})`);
+      assert(
+        split.iku !== split.okonau && /가다/.test(split.iku) && /행하/.test(split.okonau),
+        `行 reads as 가다 or 행하다 depending on the reading (got "${split.iku}" / "${split.okonau}")`
+      );
+      // Every multi-reading run must give a *different* meaning per reading, or
+      // the split is doing nothing and one of them is wrong.
+      const sameness = await page.evaluate(async () => {
+        const gloss = await buildGloss();
+        return Object.entries(gloss)
+          .filter(([, m]) => Object.keys(m).length > 1)
+          .filter(([, m]) => new Set(Object.values(m)).size !== Object.keys(m).length)
+          .map(([run]) => run);
+      });
+      assert(
+        sameness.length <= 2,
+        `a run with two readings should mean two things (same on: ${sameness.join(" ")})`
+      );
+      await page.close();
+    }
+
+    // --- 문법 words are tappable too ---
+    {
+      const page = await browser.newPage({ viewport: PHONE });
+      await page.goto(URL, { waitUntil: "networkidle" });
+      await page.click("#start-grammar");
+      await page.waitForSelector("#quiz-choices .choice-btn");
+      assert(
+        !(await page.isVisible("#quiz-reveal")),
+        "the 문법 reveal line stays off until something is tapped"
+      );
+      const taps = await page.locator("#quiz-prompt .ruby-word").count();
+      assert(taps > 0, `the 문법 sentence offers tappable words (got ${taps})`);
+      // The furigana stays on screen here, unlike 독해 — it is the only reading
+      // support the sentence has, so the span keeps the parens.
+      const shownText = await page.textContent("#quiz-prompt");
+      const sentence = await page.evaluate(() => quiz.pool[quiz.index].sentence);
+      assert(shownText === sentence, "the 문법 sentence still renders with its furigana");
+      const want = await page.evaluate(() => {
+        const m = [...quiz.pool[quiz.index].sentence.matchAll(/([\u4E00-\u9FFF]+)（([\u3040-\u309F]+)）/gu)][0];
+        const g = glossFor(m[1], m[2]);
+        return g ? `${m[1]} → ${m[2]} · ${g}` : `${m[1]} → ${m[2]}`;
+      });
+      await page.locator("#quiz-prompt .ruby-word").first().click();
+      const got = (await page.textContent("#quiz-reveal")).trim();
+      assert(got === want, `tapping a 문법 word shows its reading and meaning (expected "${want}", got "${got}")`);
       await page.close();
     }
 
