@@ -1,6 +1,6 @@
 // Headless-browser smoke test for the static site. Run with `npm test`.
 // Starts a local static server, drives the app with Playwright, and asserts
-// the core flows work: today/checklist/streak, the plan table, both quizzes,
+// the core flows work: the topbar, both quizzes,
 // and week/D-day logic across date boundaries (before start / mid-plan /
 // last day / exam day / after exam).
 const { chromium } = require("playwright");
@@ -178,7 +178,7 @@ async function main() {
   try {
     const plan = JSON.parse(fs.readFileSync(path.join(ROOT, "data", "n4", "plan.json"), "utf8"));
 
-    // --- Core flow: today / checklist / streak / plan / quizzes ---
+    // --- Core flow: topbar / quizzes ---
     {
       const page = await browser.newPage();
       const consoleErrors = [];
@@ -187,7 +187,7 @@ async function main() {
 
       await withFixedDate(page, plan.weeks[2].start); // safely mid-plan, avoids boundary flakiness
       await page.goto(URL, { waitUntil: "networkidle" });
-      await page.waitForSelector("#week-title");
+      await page.waitForSelector("#today-task");
 
       // Cache-busting: the deploy workflow rewrites these markers to the commit
       // SHA. Assert the hooks it edits are present and shaped as it expects, so a
@@ -207,25 +207,15 @@ async function main() {
         assert(lang === "ja", `${sel} is marked lang="ja" so kanji use Japanese glyph shapes (got "${lang}")`);
       }
 
-      const weekTitle = await page.textContent("#week-title");
-      assert(weekTitle.startsWith("Week 3"), `week-title reflects the mocked date (got "${weekTitle}")`);
-
-      const streakDays = await page.$$eval("#streak .day", (els) => els.length);
-      assert(streakDays === 14, `streak grid renders 14 days (got ${streakDays})`);
-
-      // Uses item 3 (no quiz auto-check maps to it) so it doesn't interfere with
-      // the quiz-driven checklist assertions later in this test.
-      await page.locator('#checklist input[type="checkbox"]').nth(3).check();
-      await page.reload({ waitUntil: "networkidle" });
-      await page.waitForSelector("#checklist input");
-      const persisted = await page.locator('#checklist input[type="checkbox"]').nth(3).isChecked();
-      assert(persisted, "checklist state persists across reload (localStorage)");
-      await page.locator('#checklist input[type="checkbox"]').nth(3).uncheck(); // reset for the quiz auto-check assertions below
-
-      await page.click('.tab-btn[data-tab="plan"]');
-      await page.waitForSelector("#plan-table tbody tr");
-      const rowCount = await page.$$eval("#plan-table tbody tr", (rows) => rows.length);
-      assert(rowCount === plan.weeks.length, `plan table shows all ${plan.weeks.length} weeks (got ${rowCount})`);
+      // Two tabs since 2026-10-17; the plan reaches the screen as the topbar line.
+      const tabs = await page.$$eval(".tab-btn", (els) => els.map((e) => e.textContent));
+      assert(
+        tabs.join(" | ") === "쪽지시험 | 한자 기초",
+        `only the two tabs that get used are left (got "${tabs.join(" | ")}")`
+      );
+      assert(await page.isVisible("#quiz-start"), "쪽지시험 is the tab that opens");
+      const topLine = (await page.textContent("#today-task")).trim();
+      assert(topLine.length > 0, "the topbar still says what to do today");
 
       // Runs one full 10-question round for `startButtonId`, calling `onFirstQuestion`
       // (if given) after the first question renders but before answering it, and
@@ -277,13 +267,8 @@ async function main() {
         assert(btnClass.includes("done-today"), `${startButtonId}: marked done-today`);
       }
 
-      async function checklistChecked(i) {
-        return page.locator('#checklist input[type="checkbox"]').nth(i).isChecked();
-      }
 
       await page.click('.tab-btn[data-tab="quiz"]');
-
-      assert(!(await checklistChecked(0)), "checklist item 0 starts unchecked before any word/kana/kanji quiz today");
       await runQuizRound(
         "#start-hiragana",
         async () => {
@@ -295,7 +280,6 @@ async function main() {
           assert(/^.+ = .+$/.test(note.trim()), `hiragana quiz explains the char=hangul pairing after answering (got "${note}")`);
         }
       );
-      assert(await checklistChecked(0), "completing the hiragana quiz auto-checks checklist item 0 (단어·한자 학습/복습)");
 
       await runQuizRound("#start-katakana");
 
@@ -423,13 +407,10 @@ async function main() {
         await assertRelatedLines(page, note, "vocab");
         }
       );
-
-      assert(!(await checklistChecked(1)), "checklist item 1 starts unchecked before any grammar/reading quiz today");
       await runQuizRound("#start-grammar", null, async () => {
         assert(!(await page.isVisible("#quiz-reveal")), "reading cue stays hidden in quiz types that don't wire it (grammar)");
         assert(await page.isVisible("#quiz-note"), "grammar quiz shows an explanation note after answering");
       });
-      assert(await checklistChecked(1), "completing the grammar quiz auto-checks checklist item 1 (문법·진도 학습)");
 
       await runQuizRound(
         "#start-kanji",
@@ -488,8 +469,6 @@ async function main() {
           assert(await page.isVisible("#quiz-note"), "reading quiz shows an explanation note after answering");
         }
       );
-
-      assert(!(await checklistChecked(2)), "checklist item 2 starts unchecked before any listening quiz today");
       await runQuizRound(
         "#start-listening",
         async () => {
@@ -553,8 +532,6 @@ async function main() {
           );
         }
       );
-      assert(await checklistChecked(2), "completing the listening quiz auto-checks checklist item 2 (청해 연습)");
-      assert(!(await checklistChecked(3)), "checklist item 3 (전날 내용 복습) has no quiz proxy and stays unchecked");
 
       const nextDay = addDaysToDateStr(plan.weeks[2].start, 1);
       await withFixedDate(page, nextDay);
@@ -562,7 +539,6 @@ async function main() {
       await page.click('.tab-btn[data-tab="quiz"]');
       const vocabBtnTextNextDay = await page.textContent("#start-vocab");
       assert(!vocabBtnTextNextDay.startsWith("✓"), `completion badge resets on a new day (got "${vocabBtnTextNextDay}")`);
-      assert(!(await checklistChecked(0)), "auto-checked checklist items also reset on a new day");
 
       assert(consoleErrors.length === 0, `no console errors (got ${JSON.stringify(consoleErrors)})`);
       await page.close();
@@ -923,18 +899,27 @@ async function main() {
       const taps = await page.locator("#quiz-prompt .ruby-word").count();
       assert(taps > 0, `the passage offers tappable words (got ${taps})`);
 
-      const cue = (await page.textContent("#quiz-reveal")).trim();
-      assert(cue === "한자를 누르면 읽는 법", `the reveal line cues the tap before anything is tapped (got "${cue}")`);
+      // No cue line any more — the dotted underline is the affordance, and the
+      // owner knows it ("이건 내가 알고 있으니 삭제해줘", 2026-10-17).
+      assert(
+        !(await page.isVisible("#quiz-reveal")),
+        `the reveal line stays off until something is tapped (got "${(await page.textContent("#quiz-reveal")).trim()}")`
+      );
 
       const first = await page.evaluate(() => {
         const m = [...quiz.pool[quiz.index].ruby.matchAll(/([\u4E00-\u9FFF]+)（([\u3040-\u309F]+)）/gu)][0];
-        return { word: m[1], reading: m[2] };
+        return { word: m[1], reading: m[2], gloss: glossFor(m[1]) };
       });
       await page.locator("#quiz-prompt .ruby-word").first().click();
       const revealed = (await page.textContent("#quiz-reveal")).trim();
+      // The meaning rides along only when the data knows that exact word; the
+      // reading alone is the honest fallback, never a guessed dictionary form.
+      const wantReveal = first.gloss
+        ? `${first.word} → ${first.reading} · ${first.gloss}`
+        : `${first.word} → ${first.reading}`;
       assert(
-        revealed === `${first.word} → ${first.reading}`,
-        `tapping a word shows its reading (expected "${first.word} → ${first.reading}", got "${revealed}")`
+        revealed === wantReveal,
+        `tapping a word shows its reading, and its meaning when known (expected "${wantReveal}", got "${revealed}")`
       );
 
       // Reading a word is not the 독해 answer, so the peek is free — the same rule
@@ -944,6 +929,45 @@ async function main() {
       assert(
         readingBox !== null && readingBox > 0,
         `a tapped reading still counts as recall when answered right (box ${readingBox}, expected above 0)`
+      );
+      await page.close();
+    }
+
+    // --- A tapped 독해 word shows its meaning when the data has that word ---
+    // A random passage may draw only single characters mid-inflection, which
+    // glossFor deliberately does not guess at, so this forces a passage holding
+    // a word that kanji.json/vocab.json carry outright.
+    {
+      const page = await browser.newPage({ viewport: PHONE });
+      await page.goto(URL, { waitUntil: "networkidle" });
+      await page.click('.tab-btn[data-tab="quiz"]');
+      await page.click("#start-reading");
+      await page.waitForSelector("#quiz-choices .choice-btn");
+      const picked = await page.evaluate(async () => {
+        const all = await fetch("data/n4/reading.json").then((r) => r.json());
+        const RE = /([\u4E00-\u9FFF]+)（([\u3040-\u309F]+)）/gu;
+        for (const e of all) {
+          for (const m of e.ruby.matchAll(RE)) {
+            if (glossFor(m[1])) {
+              quiz.pool = [e];
+              quiz.index = 0;
+              renderQuestion();
+              return { word: m[1], reading: m[2], gloss: glossFor(m[1]) };
+            }
+          }
+        }
+        return null;
+      });
+      assert(picked, "at least one 독해 word is one the data carries outright");
+      const idx = await page.evaluate(
+        (w) => [...document.querySelectorAll("#quiz-prompt .ruby-word")].findIndex((s) => s.textContent === w),
+        picked.word
+      );
+      await page.locator("#quiz-prompt .ruby-word").nth(idx).click();
+      const line = (await page.textContent("#quiz-reveal")).trim();
+      assert(
+        line === `${picked.word} → ${picked.reading} · ${picked.gloss}`,
+        `the tap line carries reading and meaning (expected "${picked.word} → ${picked.reading} · ${picked.gloss}", got "${line}")`
       );
       await page.close();
     }
@@ -1266,8 +1290,11 @@ async function main() {
           got: [...group.querySelectorAll(".wrong-list li")].map((li) => li.textContent),
         };
       }, seeded.kanjiKeys);
+      // Compared as sets: dueKeys shuffles within equal priority on purpose, so
+      // the list order is not stable and asserting it would be asserting the bug.
       assert(
-        lines.got.join("\n") === lines.want.join("\n"),
+        lines.got.length === lines.want.length &&
+          [...lines.got].sort().join("\n") === [...lines.want].sort().join("\n"),
         `every queued item is listed as the page formats it (got ${lines.got.length} lines, wanted ${lines.want.length})`
       );
       assert(
@@ -1279,6 +1306,36 @@ async function main() {
       assert(
         drillLabels.join(" | ") === "오늘 복습 (2문제) | 오늘 복습 (5문제)",
         `the drill button says how long the round will be, capped at the round size (got "${drillLabels.join(" | ")}")`
+      );
+      await page.close();
+    }
+
+    // --- Equally-due items don't come up in the same order every round ---
+    // After the migration every item was (box 0, due today) — one tie covering
+    // the whole queue — and dueKeys returned Object.keys order, so the round's
+    // review slots served the same two words every day for ever. That is what
+    // "매일같은게 보임" was (2026-10-17).
+    {
+      const page = await browser.newPage({ viewport: PHONE });
+      await page.goto(URL, { waitUntil: "networkidle" });
+      const spread = await page.evaluate(() => {
+        const sched = {};
+        for (let i = 0; i < 20; i++) sched[`w${i}`] = { box: 0, due: todayStr() };
+        const firsts = new Set();
+        for (let i = 0; i < 40; i++) firsts.add(dueKeys(sched)[0]);
+        // priority must still hold: one genuinely overdue item always leads
+        sched.overdue = { box: 0, due: addDays(todayStr(), -3) };
+        const leads = new Set();
+        for (let i = 0; i < 20; i++) leads.add(dueKeys(sched)[0]);
+        return { distinctFirsts: firsts.size, leads: [...leads] };
+      });
+      assert(
+        spread.distinctFirsts > 5,
+        `equally-due items are drawn in a fresh order each round (only ${spread.distinctFirsts} distinct leads in 40 calls)`
+      );
+      assert(
+        spread.leads.length === 1 && spread.leads[0] === "overdue",
+        `the shuffle does not override priority — the overdue item still leads (got ${spread.leads.join(", ")})`
       );
       await page.close();
     }
@@ -1361,10 +1418,6 @@ async function main() {
         badge.score === 9 && badge.total === 10,
         `a drill round leaves an existing result alone (got ${badge.score}/${badge.total})`
       );
-      const checked = await page.evaluate(
-        () => (JSON.parse(localStorage.getItem("jlpt_daily_checklist_n4"))[todayStr()] || [])[0]
-      );
-      assert(checked === true, "finishing a drill still ticks the checklist item it maps to");
       await page.close();
     }
 
@@ -1463,7 +1516,6 @@ async function main() {
       });
       assert(bad.length === 0, `the weeks tile the period with 7 day lines each (${bad.join(" | ")})`);
       assert(Boolean(plan.preStart), "the plan says what to do before it starts");
-      assert(Boolean(plan.dailyBase), "the plan names the daily parallel track");
     }
 
     // --- 그날 할 일 shows at the top of the page ---
@@ -1476,7 +1528,7 @@ async function main() {
         const page = await browser.newPage({ viewport: PHONE });
         await withFixedDate(page, date);
         await page.goto(URL, { waitUntil: "networkidle" });
-        await page.waitForSelector("#week-title");
+        await page.waitForSelector("#dday");
         const week = plan.weeks.find((w) => date >= w.start && date <= w.end);
         const weekday = new Date(`${date}T00:00:00`).getDay();
         const want = week.days[(weekday + 6) % 7];
@@ -1490,8 +1542,6 @@ async function main() {
           shown.startsWith(`${Number(m)}/${Number(d)} (`),
           `${date}: the top line is dated (got "${shown}")`
         );
-        const daily = (await page.textContent("#week-daily")).trim();
-        assert(daily === plan.dailyBase, `${date}: the week card names the daily track (got "${daily}")`);
         await page.close();
       }
     }
@@ -1501,37 +1551,38 @@ async function main() {
       const before = await browser.newPage({ viewport: PHONE });
       await withFixedDate(before, addDaysToDateStr(plan.startDate, -1));
       await before.goto(URL, { waitUntil: "networkidle" });
-      await before.waitForSelector("#week-title");
+      await before.waitForSelector("#dday");
       assert(
         (await before.textContent("#today-task")).trim() === plan.preStart,
         "before the plan starts, the top line says when it does"
       );
-      assert(!(await before.isVisible("#week-daily")), "the daily track line is hidden before the plan starts");
       await before.close();
 
       const after = await browser.newPage({ viewport: PHONE });
       await withFixedDate(after, addDaysToDateStr(plan.examDate, 1));
       await after.goto(URL, { waitUntil: "networkidle" });
-      await after.waitForSelector("#week-title");
+      await after.waitForSelector("#dday");
       assert(!(await after.isVisible("#today-task")), "after the exam the top line is gone, not blank-but-boxed");
       await after.close();
     }
 
     // --- Date-boundary logic ---
+    // The week card is gone, so these read the topbar: the D-day line, and the
+    // day's task (which is empty outside the plan period).
     const cases = [
-      { date: "2000-01-01", expect: (t, d) => t.includes("시작 전") },
-      { date: plan.weeks[0].start, expect: (t) => t.startsWith("Week 1") },
-      { date: plan.examDate, expect: (t, d) => d.includes("시험일") },
-      { date: "2099-01-01", expect: (t, d) => d.includes("종료") },
+      { date: "2000-01-01", expect: (task, d) => task === plan.preStart && d.startsWith("시험까지") },
+      { date: plan.weeks[0].start, expect: (task) => task.startsWith("10/13 (") },
+      { date: plan.examDate, expect: (task, d) => d.includes("시험일") },
+      { date: "2099-01-01", expect: (task, d) => d.includes("종료") && task === "" },
     ];
     for (const c of cases) {
       const page = await browser.newPage();
       await withFixedDate(page, c.date);
       await page.goto(URL, { waitUntil: "networkidle" });
-      await page.waitForSelector("#week-title");
-      const title = await page.textContent("#week-title");
+      await page.waitForSelector("#dday");
+      const task = (await page.textContent("#today-task")).trim();
       const dday = await page.textContent("#dday");
-      assert(c.expect(title, dday), `date ${c.date} -> week-title="${title}" dday="${dday}"`);
+      assert(c.expect(task, dday), `date ${c.date} -> today-task="${task}" dday="${dday}"`);
       await page.close();
     }
 
