@@ -766,6 +766,9 @@ const XREF_SOURCES = ["kanji", "vocab"];
 let _xrefIndex = null; // char -> [{ word, reading, meaning }], built once per page load
 let _wordIndex = null; // word -> { word, reading, meaning }, from the same files
 let _gloss = null; // run -> { reading -> Korean }, the authored tap glossary
+let _patterns = null; // grammar chunk -> Korean, the kana half of the glossary
+let _patternKeys = null; // the same chunks, longest first
+let _patternBlocked = null; // strings no chunk may start inside
 let _radicalIndex = null; // char -> { rad, name, sense, siblings[] }
 
 const CJK = /[\u4E00-\u9FFF]/gu;
@@ -796,6 +799,23 @@ async function buildGloss() {
   if (_gloss) return _gloss;
   _gloss = await fetch(`data/${CURRENT_LEVEL}/gloss.json`).then((r) => r.json());
   return _gloss;
+}
+
+// data/<level>/pattern.json is the kana half of the same tap glossary. gloss.json
+// answers "what does this kanji word mean"; this answers "what is this ending
+// doing" — ました, ています, なければなりません. Asked for on 2026-10-18 from a
+// screenshot of Chrome's text-selection toolbar: the owner had long-pressed
+// ました, because only kanji runs were tappable, and the browser offered to
+// search the web for it.
+async function buildPatterns() {
+  if (_patterns) return _patterns;
+  const file = await fetch(`data/${CURRENT_LEVEL}/pattern.json`).then((r) => r.json());
+  _patterns = file.chunks;
+  // Longest match wins, so a longer form must be tried first: ませんでした is one
+  // chunk, not ません followed by でした.
+  _patternKeys = Object.keys(file.chunks).sort((a, b) => b.length - a.length);
+  _patternBlocked = file.blocked;
+  return _patterns;
 }
 
 // The Korean meaning of a tapped kanji run.
@@ -888,7 +908,8 @@ async function startQuiz(type, { wrongOnly = false } = {}) {
   if (XREF_TYPES.includes(type)) await Promise.all([buildXrefIndex(), buildRadicalIndex()]);
   // 독해/문법 don't use the cross-reference note, but their tapped words show a
   // meaning, which needs both the authored glossary and the word index.
-  else if (GLOSS_TYPES.includes(type)) await Promise.all([buildXrefIndex(), buildGloss()]);
+  else if (GLOSS_TYPES.includes(type))
+    await Promise.all([buildXrefIndex(), buildGloss(), buildPatterns()]);
   quiz.type = type;
   quiz.allItems = items;
   const keyField = QUIZ_KEY_FIELD[type];
@@ -950,6 +971,50 @@ function stripRuby(ruby) {
   return ruby.replace(RUBY, "$1");
 }
 
+// The one place a tap writes to #quiz-reveal, shared by the kanji runs and the
+// kana chunks so the three call sites can't drift apart.
+function showTapped(revealEl, text) {
+  revealEl.textContent = text;
+  revealEl.classList.add("revealed");
+  revealEl.hidden = false;
+}
+
+// Appends a run of kana to `parent`, wrapping every known grammar chunk in its
+// own tappable span. `blocked` is the hand-verified list of places a chunk would
+// otherwise land inside a word: 分（わ）からない would show から as the particle,
+// 私のではありません would show ので as the reason. A blocked string only stops a
+// match from *starting* there — the scan moves on one character, so the ではあり
+// ません inside it still gets its own span.
+function appendChunks(parent, text, revealEl) {
+  if (!_patternKeys) {
+    parent.append(text);
+    return;
+  }
+  let plain = "";
+  const flush = () => {
+    if (plain) parent.append(plain);
+    plain = "";
+  };
+  for (let i = 0; i < text.length; ) {
+    const hit = _patternBlocked.some((b) => text.startsWith(b, i))
+      ? null
+      : _patternKeys.find((k) => text.startsWith(k, i));
+    if (!hit) {
+      plain += text[i];
+      i += 1;
+      continue;
+    }
+    flush();
+    const span = document.createElement("span");
+    span.className = "gram-chunk";
+    span.textContent = hit;
+    span.onclick = () => showTapped(revealEl, `${hit} → ${_patterns[hit]}`);
+    parent.append(span);
+    i += hit.length;
+  }
+  flush();
+}
+
 // Builds the passage with each annotated word as its own tappable span. Tapping
 // one shows its reading in #quiz-reveal — the same line the 한자/단어 quizzes use.
 // Not penalized: the rule across the app is that a reveal costs the review-queue
@@ -963,13 +1028,11 @@ function renderRubyPassage(promptEl, item, revealEl) {
   }
   const show = (word, reading) => {
     const gloss = glossFor(word, reading);
-    revealEl.textContent = gloss ? `${word} → ${reading} · ${gloss}` : `${word} → ${reading}`;
-    revealEl.classList.add("revealed");
-    revealEl.hidden = false;
+    showTapped(revealEl, gloss ? `${word} → ${reading} · ${gloss}` : `${word} → ${reading}`);
   };
   let last = 0;
   for (const m of item.ruby.matchAll(RUBY)) {
-    if (m.index > last) promptEl.append(item.ruby.slice(last, m.index));
+    if (m.index > last) appendChunks(promptEl, item.ruby.slice(last, m.index), revealEl);
     const span = document.createElement("span");
     span.className = "ruby-word";
     span.textContent = m[1];
@@ -977,7 +1040,7 @@ function renderRubyPassage(promptEl, item, revealEl) {
     promptEl.append(span);
     last = m.index + m[0].length;
   }
-  promptEl.append(item.ruby.slice(last));
+  appendChunks(promptEl, item.ruby.slice(last), revealEl);
   // No cue line: the owner knows the words are tappable (2026-10-17, "이건 내가
   // 알고 있으니 삭제해줘") and the dotted underline says it anyway. The line
   // stays hidden until something is actually tapped.
@@ -993,20 +1056,18 @@ function renderGlossedSentence(promptEl, sentence, revealEl) {
   promptEl.textContent = "";
   let last = 0;
   for (const m of sentence.matchAll(RUBY)) {
-    if (m.index > last) promptEl.append(sentence.slice(last, m.index));
+    if (m.index > last) appendChunks(promptEl, sentence.slice(last, m.index), revealEl);
     const span = document.createElement("span");
     span.className = "ruby-word";
     span.textContent = m[0];
     span.onclick = () => {
       const gloss = glossFor(m[1], m[2]);
-      revealEl.textContent = gloss ? `${m[1]} → ${m[2]} · ${gloss}` : `${m[1]} → ${m[2]}`;
-      revealEl.classList.add("revealed");
-      revealEl.hidden = false;
+      showTapped(revealEl, gloss ? `${m[1]} → ${m[2]} · ${gloss}` : `${m[1]} → ${m[2]}`);
     };
     promptEl.append(span);
     last = m.index + m[0].length;
   }
-  promptEl.append(sentence.slice(last));
+  appendChunks(promptEl, sentence.slice(last), revealEl);
 }
 
 function renderQuestion() {

@@ -142,6 +142,10 @@ main {
 /* Marks which words in a 독해 passage can be tapped for a reading. Dotted rather
    than solid so a long passage doesn't turn into a wall of underlines. */
 .ruby-word { cursor: pointer; border-bottom: 1px dotted var(--muted); }
+/* The kana chunks (ました, ています, なければなりません) tap the same way. Dashed
+   and in the accent colour so the two kinds of tap are told apart at a glance:
+   a dotted grey word is vocabulary, a dashed purple run is grammar. */
+.gram-chunk { cursor: pointer; border-bottom: 1px dashed var(--accent); }
 .quiz-reveal { margin: 0 0 8px; color: var(--muted); font-size: 0.9rem; cursor: pointer; }
 .quiz-reveal.revealed { font-size: 1.5rem; color: var(--text); cursor: default; }
 .quiz-meaning { margin: 0 0 8px; color: var(--muted); font-size: 0.9rem; cursor: pointer; }

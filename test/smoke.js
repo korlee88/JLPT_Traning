@@ -1143,6 +1143,157 @@ async function main() {
       await page.close();
     }
 
+    // --- Grammar chunks are tappable, over the whole corpus ---
+    // Asked for on 2026-10-18 from a screenshot of Chrome's text-selection
+    // toolbar: the owner had long-pressed ました and the browser offered to
+    // search the web for it, because only kanji runs were tap targets. This
+    // renders every 독해 passage and every 문법 sentence rather than whichever a
+    // round draws, and asserts three things the data can silently lose:
+    //   - the chunker puts back exactly the text it was given (no dropped or
+    //     doubled character), the same bar stripRuby(ruby) === passage clears;
+    //   - every chunk in pattern.json fires somewhere, so a dead entry can't
+    //     accumulate — the file is hand-verified in context, like radical.json;
+    //   - no chunk starts inside a blocked string. Those three are the places a
+    //     match would teach something false: 分からない would gloss から as the
+    //     particle, 私のではありません would gloss ので as the reason, and
+    //     寒くないです would gloss ないで as "~하지 말고".
+    {
+      const page = await browser.newPage({ viewport: PHONE });
+      await page.goto(URL, { waitUntil: "networkidle" });
+      const sweep = await page.evaluate(async () => {
+        await Promise.all([buildXrefIndex(), buildGloss(), buildPatterns()]);
+        const file = await fetch("data/n4/pattern.json").then((r) => r.json());
+        const prompt = document.getElementById("quiz-prompt");
+        const out = { chunks: 0, used: {}, mismatch: [], inBlocked: [], blockedSeen: {}, entries: 0 };
+        const walk = async (name, field, render) => {
+          const all = await fetch(`data/n4/${name}`).then((r) => r.json());
+          for (const e of all) {
+            out.entries++;
+            render(e);
+            const text = prompt.textContent;
+            if (text !== e[field]) out.mismatch.push(e[field].slice(0, 20));
+            const starts = new Set();
+            let off = 0;
+            for (const node of prompt.childNodes) {
+              if (node.nodeType === 1 && node.classList.contains("gram-chunk")) {
+                starts.add(off);
+                out.chunks++;
+                out.used[node.textContent] = (out.used[node.textContent] || 0) + 1;
+              }
+              off += node.textContent.length;
+            }
+            for (const b of file.blocked) {
+              for (let i = text.indexOf(b); i >= 0; i = text.indexOf(b, i + 1)) {
+                out.blockedSeen[b] = (out.blockedSeen[b] || 0) + 1;
+                if (starts.has(i)) out.inBlocked.push(`${b} in ${text.slice(0, 16)}`);
+              }
+            }
+          }
+        };
+        await walk("reading.json", "passage", (e) =>
+          renderRubyPassage(prompt, e, document.getElementById("quiz-reveal"))
+        );
+        await walk("grammar.json", "sentence", (e) =>
+          renderGlossedSentence(prompt, e.sentence, document.getElementById("quiz-reveal"))
+        );
+        out.unused = Object.keys(file.chunks).filter((k) => !out.used[k]);
+        out.deadBlocks = file.blocked.filter((b) => !out.blockedSeen[b]);
+        out.total = Object.keys(file.chunks).length;
+        return out;
+      });
+      assert(
+        sweep.mismatch.length === 0,
+        `chunking a passage puts back the same text (${sweep.mismatch.length} changed: ${sweep.mismatch.slice(0, 3).join(" | ")})`
+      );
+      assert(sweep.entries > 170, `the sweep really walked both files (${sweep.entries} entries)`);
+      assert(
+        sweep.unused.length === 0,
+        `every chunk in pattern.json is one the corpus actually uses (dead: ${sweep.unused.join(" ")})`
+      );
+      assert(
+        sweep.deadBlocks.length === 0,
+        `every blocked string is one the corpus actually contains (dead: ${sweep.deadBlocks.join(" ")})`
+      );
+      assert(
+        sweep.inBlocked.length === 0,
+        `no chunk starts inside a blocked string (${sweep.inBlocked.slice(0, 3).join(" | ")})`
+      );
+      assert(
+        sweep.chunks > 600,
+        `the chunks fire across the corpus, not on a handful of entries (${sweep.chunks} spans over ${sweep.total} patterns)`
+      );
+      await page.close();
+    }
+
+    // --- Tapping a grammar chunk explains it, in 독해 and in 문법 ---
+    // Not penalized, by the rule the whole app follows: a reveal costs the
+    // review-queue credit only when what it reveals is that quiz's answer, and
+    // neither 독해 nor 문법 asks what ました means.
+    {
+      for (const [type, btn] of [["reading", "#start-reading"], ["grammar", "#start-grammar"]]) {
+        const page = await browser.newPage({ viewport: PHONE });
+        await page.goto(URL, { waitUntil: "networkidle" });
+        await page.click('.tab-btn[data-tab="quiz"]');
+        await page.click(btn);
+        await page.waitForSelector("#quiz-choices .choice-btn");
+        const n = await page.locator("#quiz-prompt .gram-chunk").count();
+        assert(n > 0, `the ${type} prompt offers tappable grammar chunks (got ${n})`);
+        const want = await page.evaluate(() => {
+          const el = document.querySelector("#quiz-prompt .gram-chunk");
+          return `${el.textContent} → ${_patterns[el.textContent]}`;
+        });
+        await page.locator("#quiz-prompt .gram-chunk").first().click();
+        const got = (await page.textContent("#quiz-reveal")).trim();
+        assert(got === want, `tapping a chunk explains it (expected "${want}", got "${got}")`);
+        const item = await page.evaluate(() => quiz.pool[quiz.index]);
+        await clickChoice(page, item.answer);
+        const key = type === "reading" ? item.passage : item.sentence;
+        const box = await boxOf(page, type, key);
+        assert(box !== null && box > 0, `a tapped chunk still counts as recall (box ${box})`);
+        await page.close();
+      }
+    }
+
+    // --- The chunk explanation never pushes the choices off a phone screen ---
+    // The reveal line is 1.5rem and the longest explanation runs three lines on
+    // top of a 독해 passage, which is the one combination that could bury the
+    // answers. Measured at 390x844 against the longest line the data can show.
+    {
+      const page = await browser.newPage({ viewport: PHONE });
+      await page.goto(URL, { waitUntil: "networkidle" });
+      await page.click('.tab-btn[data-tab="quiz"]');
+      await page.click("#start-reading");
+      await page.waitForSelector("#quiz-choices .choice-btn");
+      const worst = await page.evaluate(async () => {
+        const all = await fetch("data/n4/reading.json").then((r) => r.json());
+        let best = null;
+        let bestLen = -1;
+        for (const e of all) {
+          for (const k of _patternKeys) {
+            const len = e.ruby.length + k.length + _patterns[k].length;
+            if (e.ruby.includes(k) && len > bestLen) {
+              bestLen = len;
+              best = { e, k };
+            }
+          }
+        }
+        quiz.pool = [best.e];
+        quiz.index = 0;
+        renderQuestion();
+        const i = [...document.querySelectorAll("#quiz-prompt .gram-chunk")].findIndex(
+          (s) => s.textContent === best.k
+        );
+        document.querySelectorAll("#quiz-prompt .gram-chunk")[i].click();
+        const last = [...document.querySelectorAll("#quiz-choices .choice-btn")].pop();
+        return { chunk: best.k, bottom: Math.round(last.getBoundingClientRect().bottom) };
+      });
+      assert(
+        worst.bottom <= PHONE.height,
+        `the longest chunk explanation leaves the choices on screen (last choice ends at y=${worst.bottom} after tapping ${worst.chunk}, fold ${PHONE.height})`
+      );
+      await page.close();
+    }
+
     // --- 문법 renders at its own size, not the single-kanji 2.6rem ---
     // Its sentences carry furigana as 漢字（かな）, which roughly doubles the
     // character count; at 2.6rem one ran over three lines on a phone.
