@@ -714,6 +714,35 @@ async function main() {
       // (a component named with its gloss, so a paren) or what shape it draws —
       // the radicals themselves and the pictographs are the second kind. A note
       // that does neither is a restatement of the 뜻, which teaches nothing.
+      // A "(소리)" label may only appear as "(소리 → カタカナ)". Bare, it was a
+      // false lead half the time: 海 carries 毎, and the data's own 毎日(まいにち)
+      // invites まい where 海 is かい; 空 carries 工 with 工場(こうじょう) beside it
+      // where 空 is くう. The arrow form claims the reading really does carry over
+      // (先 セン → 洗 セン), which is the one fact a 한자 읽기 quiz can use.
+      const bareSound = Object.entries(chars).filter(([, e]) => /소리[)）]/.test(e.note));
+      assert(
+        bareSound.length === 0,
+        `a 소리 label says which reading it gives (bare: ${bareSound.map(([c]) => c).join(" ")})`
+      );
+      const claims = Object.entries(chars)
+        .map(([c, e]) => [c, (e.note.match(/소리 → ([\u30A0-\u30FF]+)\)/) || [])[1]])
+        .filter(([, kana]) => kana);
+      assert(claims.length >= 25, `the carried readings are a real set, not a token few (${claims.length})`);
+      // Hand-verified like radical.json, but grounded where the data can ground
+      // it: the claimed reading must show up in a word the app itself teaches.
+      // Not every one can — 捨/シャ has only 捨てる in the files — so this asserts
+      // the attested share rather than demanding all of them.
+      const kanjiWords = JSON.parse(fs.readFileSync(path.join(ROOT, "data/n4/kanji.json"), "utf8"));
+      const vocabWords = JSON.parse(fs.readFileSync(path.join(ROOT, "data/n4/vocab.json"), "utf8"));
+      const toHira = (k) => k.replace(/[\u30A1-\u30F6]/g, (m) => String.fromCharCode(m.charCodeAt(0) - 0x60));
+      const attested = claims.filter(([c, kana]) =>
+        [...kanjiWords, ...vocabWords].some((w) => w.word.includes(c) && w.reading.includes(toHira(kana)))
+      );
+      assert(
+        attested.length >= 8,
+        `most carried readings are visible in the app's own words (${attested.length} of ${claims.length}: ${attested.map(([c]) => c).join("")})`
+      );
+
       const noParts = Object.entries(chars).filter(
         ([, e]) => !/[(（]/.test(e.note) && !e.note.includes("모양")
       );
