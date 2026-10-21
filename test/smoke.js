@@ -1265,6 +1265,22 @@ async function main() {
         await page.click('.tab-btn[data-tab="quiz"]');
         await page.click(btn);
         await page.waitForSelector("#quiz-choices .choice-btn");
+        // 5 of the 89 문법 sentences put the whole ending in the blank
+        // (明日、雨が降る＿＿＿。), so the chunk is in the *answer* and the
+        // sentence really has none. A round drawing one is about 1 in 18, which
+        // is exactly how this failed once it had run enough times. Force an
+        // entry that has a chunk, the way the 독해 gloss and 부수 blocks already
+        // force theirs rather than trusting the draw.
+        const picked = await page.evaluate(() => {
+          for (const item of quiz.allItems) {
+            quiz.pool = [item];
+            quiz.index = 0;
+            renderQuestion();
+            if (document.querySelector("#quiz-prompt .gram-chunk")) return true;
+          }
+          return false;
+        });
+        assert(picked, `${type} has an entry carrying a tappable grammar chunk`);
         const n = await page.locator("#quiz-prompt .gram-chunk").count();
         assert(n > 0, `the ${type} prompt offers tappable grammar chunks (got ${n})`);
         const want = await page.evaluate(() => {
