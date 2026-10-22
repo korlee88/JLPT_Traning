@@ -100,6 +100,10 @@ function setupTabs() {
       // this repaints each time the tab is opened. Still not at startup — its
       // fetches would delay the 오늘 체크 screen for a list nobody is looking at.
       if (btn.dataset.tab === "quiz") renderWrongNote();
+      // Repainted on open for the same reason as the 복습 노트: the stored
+      // section results move, and the exam.json fetch has no business delaying
+      // the first screen.
+      if (btn.dataset.tab === "exam" && !document.getElementById("exam-start").hidden) renderExamStart();
     });
   });
 }
@@ -1334,11 +1338,627 @@ function nextQuestion() {
   }
 }
 
+// ---------- N4 모의고사 ----------
+// The real exam, in the real shape: three sittings in the official もんだい
+// order with the official counts, the official 115 minutes split 25/55/35, and
+// the official 180-point scale — 언어지식·독해 out of 120, 청해 out of 60, pass
+// at 90 with a 19-point floor per scored block. Asked for on 2026-10-22
+// ("기출고사형식으로"), where the format *is* the point: the 쪽지시험 side
+// already drills the content, and what it cannot teach is what 85 questions in
+// a row under a clock feel like.
+//
+// **No feedback until you submit.** That is the whole difference from 쪽지시험 —
+// a quiz that tells you the answer after every question is a different exercise.
+// The notes all appear together in the review afterwards.
+//
+// Five もんだい draw from the files the 쪽지시험 already uses, so they vary every
+// sitting and feed the same review schedule. The other nine are formats no quiz
+// type expresses (문맥규정, 유의표현, 용법, 문장 조립, 글의 문법, 중문, 정보검색,
+// and the three 청해 shapes), and they live in data/<level>/exam.json.
+const EXAM_KEY = `jlpt_exam_${CURRENT_LEVEL}`;
+
+// 25/55/35 is the current (2022~) N4 timetable, not the older 30/60/35.
+const EXAM_SPEC = [
+  {
+    id: "moji",
+    label: "언어지식 (문자·어휘)",
+    minutes: 25,
+    mondai: [
+      { n: 1, ja: "漢字読み", ko: "한자 읽기", count: 7, instruction: "ことばの　読み方を　えらんでください。" },
+      { n: 2, ja: "表記", ko: "표기", count: 5, instruction: "ひらがなの　ことばは　どう　書きますか。" },
+      { n: 3, ja: "文脈規定", ko: "문맥 규정", count: 8, instruction: "（　）に　入れるのに　いちばん　いい　ものを　えらんでください。" },
+      { n: 4, ja: "言い換え類義", ko: "유의 표현", count: 4, instruction: "ぶんと　だいたい　おなじ　いみの　ぶんを　えらんでください。" },
+      { n: 5, ja: "用法", ko: "용법", count: 4, instruction: "つぎの　ことばの　つかいかたで　いちばん　いい　ものを　えらんでください。" },
+    ],
+  },
+  {
+    id: "bunpou",
+    label: "언어지식 (문법)·독해",
+    minutes: 55,
+    mondai: [
+      { n: 1, ja: "文の文法1", ko: "문법 형식 판단", count: 13, instruction: "（　）に　入れるのに　いちばん　いい　ものを　えらんでください。" },
+      { n: 2, ja: "文の文法2", ko: "문장 만들기", count: 4, instruction: "★に　入る　ものを　えらんでください。" },
+      { n: 3, ja: "文章の文法", ko: "글의 문법", count: 4, instruction: "ぶんしょうを　読んで、（　）に　入る　ものを　えらんでください。" },
+      { n: 4, ja: "内容理解（短文）", ko: "내용 이해 (단문)", count: 3, instruction: "ぶんしょうを　読んで、しつもんに　こたえてください。" },
+      { n: 5, ja: "内容理解（中文）", ko: "내용 이해 (중문)", count: 3, instruction: "ぶんしょうを　読んで、しつもんに　こたえてください。" },
+      { n: 6, ja: "情報検索", ko: "정보 검색", count: 2, instruction: "右の　おしらせを　見て、しつもんに　こたえてください。" },
+    ],
+  },
+  {
+    id: "choukai",
+    label: "청해",
+    minutes: 35,
+    mondai: [
+      { n: 1, ja: "課題理解", ko: "과제 이해", count: 8, instruction: "はなしを　聞いて、これから　何を　するか　えらんでください。" },
+      { n: 2, ja: "ポイント理解", ko: "포인트 이해", count: 7, instruction: "はなしを　聞いて、しつもんに　こたえてください。" },
+      { n: 3, ja: "発話表現", ko: "발화 표현", count: 5, instruction: "こんな　とき、何と　言いますか。" },
+      { n: 4, ja: "即時応答", ko: "즉시 응답", count: 8, instruction: "ぶんを　聞いて、いちばん　いい　へんじを　えらんでください。" },
+    ],
+  },
+];
+
+// 언어지식(문자·어휘·문법)·독해 is ONE scored block out of 120 even though it is
+// sat as two papers; 청해 is its own out of 60. That split is the exam's, not a
+// presentation choice, and it decides the 과락 — which is why it is modelled
+// rather than just totalling 85 questions.
+const EXAM_SCALE = [
+  { id: "goi", label: "언어지식·독해", max: 120, sections: ["moji", "bunpou"] },
+  { id: "choukai", label: "청해", max: 60, sections: ["choukai"] },
+];
+const EXAM_PASS_TOTAL = 90;
+const EXAM_PASS_BLOCK = 19;
+
+const exam = {
+  section: null, questions: [], index: 0, answers: [],
+  deadline: 0, timer: null, played: [], reviewing: false,
+};
+
+let _examData = null;
+async function buildExamData() {
+  if (_examData) return _examData;
+  const names = ["exam", "kanji", "grammar", "reading"];
+  const [extra, kanji, grammar, reading] = await Promise.all(
+    names.map((n) => fetch(`data/${CURRENT_LEVEL}/${n}.json`).then((r) => r.json()))
+  );
+  await buildRadicalIndex();
+  _examData = { ...extra, kanji, grammar, reading };
+  return _examData;
+}
+
+// Wrong spellings for 問題2, built the way the real ones are: swap one character
+// for another that looks like it. radical.json already groups characters by the
+// component they share, so 洗 yields 洋/海/港 — visually close, and wrong. Words
+// whose characters are in no group fall back to other words of the same length,
+// which is weaker but never produces the right answer by accident.
+function kanjiLookalikes(word, pool) {
+  const out = [];
+  const chars = [...word];
+  for (let i = 0; i < chars.length; i++) {
+    const g = _radicalIndex && _radicalIndex.get(chars[i]);
+    if (!g) continue;
+    for (const sib of g.siblings) {
+      const variant = [...chars.slice(0, i), sib, ...chars.slice(i + 1)].join("");
+      if (variant !== word) out.push(variant);
+    }
+  }
+  const picked = shuffle([...new Set(out)]).slice(0, 3);
+  if (picked.length < 3) {
+    // The fallback has to look like the answer or it is eliminated without being
+    // read: 飛行機 against 有名だ is settled by the trailing kana alone. Same
+    // kanji/kana shape is the floor, a shared character is the preference.
+    const shape = (w) => [...w].map((c) => (/[\u4E00-\u9FFF]/.test(c) ? "K" : "k")).join("");
+    const want = shape(word);
+    const chars = new Set(word);
+    const fill = shuffle(pool)
+      .filter((v) => v.word !== word && shape(v.word) === want && !picked.includes(v.word))
+      .sort((a, b) => [...b.word].filter((c) => chars.has(c)).length - [...a.word].filter((c) => chars.has(c)).length)
+      .slice(0, 3 - picked.length)
+      .map((v) => v.word);
+    picked.push(...fill);
+  }
+  if (picked.length < 3) {
+    // Last resort, and it has to exist: お正月 is the only "kKK" word in the
+    // file, so the shape filter above returns nothing and the question would
+    // render with fewer than four choices. A weak distractor beats a broken item.
+    const any = shuffle(pool)
+      .filter((v) => v.word !== word && !picked.includes(v.word))
+      .slice(0, 3 - picked.length)
+      .map((v) => v.word);
+    picked.push(...any);
+  }
+  return picked;
+}
+
+function examQuestion(fields) {
+  return { context: null, sub: null, note: "", reviewType: null, reviewKey: null, speech: null, ...fields };
+}
+
+// One builder per もんだい. Each returns exactly `count` questions, or fewer when
+// the data cannot fill it — buildExamSection asserts the total, so a short file
+// shows up as a failed test rather than a quietly shorter exam.
+const EXAM_BUILDERS = {
+  "moji-1": (d, n) =>
+    shuffle(d.kanji).slice(0, n).map((item) =>
+      examQuestion({
+        prompt: item.word, promptClass: "big",
+        choices: shuffle([item.reading, ...pickReadingDistractors(d.kanji, item)]),
+        answer: item.reading,
+        note: `${item.word}（${item.reading}）= ${item.meaning}`,
+        reviewType: "kanji", reviewKey: item.word,
+      })
+    ),
+  "moji-2": (d, n) =>
+    shuffle(d.kanji.filter((v) => /[一-鿿]/.test(v.word))).slice(0, n).map((item) =>
+      examQuestion({
+        prompt: item.reading, promptClass: "big", sub: item.meaning,
+        choices: shuffle([item.word, ...kanjiLookalikes(item.word, d.kanji)]),
+        answer: item.word,
+        note: `${item.word}（${item.reading}）= ${item.meaning}`,
+        reviewType: "kanji", reviewKey: item.word,
+      })
+    ),
+  "moji-3": (d, n) =>
+    shuffle(d.context).slice(0, n).map((item) =>
+      examQuestion({ prompt: item.sentence, choices: shuffle(item.choices), answer: item.answer, sub: item.meaning, note: item.note })
+    ),
+  "moji-4": (d, n) =>
+    shuffle(d.synonym).slice(0, n).map((item) =>
+      examQuestion({ prompt: item.sentence, choices: shuffle(item.choices), answer: item.answer, sub: item.meaning, note: item.note, stacked: true })
+    ),
+  "moji-5": (d, n) =>
+    shuffle(d.usage).slice(0, n).map((item) =>
+      examQuestion({ prompt: item.word, promptClass: "big", sub: item.meaning, choices: shuffle(item.choices), answer: item.answer, note: item.note, stacked: true })
+    ),
+  "bunpou-1": (d, n) =>
+    shuffle(d.grammar).slice(0, n).map((item) =>
+      examQuestion({
+        prompt: item.sentence, sub: item.meaning,
+        choices: shuffle(item.choices), answer: item.answer, note: item.note,
+        reviewType: "grammar", reviewKey: item.sentence,
+      })
+    ),
+  "bunpou-2": (d, n) =>
+    shuffle(d.order).slice(0, n).map((item) => {
+      const slots = item.ordered.map((_, i) => (i === item.star ? "　★　" : "　＿＿　"));
+      return examQuestion({
+        prompt: `${item.prefix}${slots.join("")}${item.suffix}`,
+        sub: item.meaning, choices: shuffle(item.ordered), answer: item.ordered[item.star], note: item.note,
+      });
+    }),
+  "bunpou-3": (d, n) => {
+    const p = shuffle(d.cloze)[0];
+    return p.blanks.slice(0, n).map((b, i) =>
+      examQuestion({
+        context: { title: p.title, body: p.ruby }, prompt: `＿${i + 1}＿`, promptClass: "big",
+        choices: shuffle(b.choices), answer: b.answer, note: b.note,
+      })
+    );
+  },
+  "bunpou-4": (d, n) =>
+    shuffle(d.reading).slice(0, n).map((item) =>
+      examQuestion({
+        context: { title: null, body: item.ruby || item.passage },
+        prompt: item.question, sub: item.questionTranslation,
+        choices: shuffle(item.choices), answer: item.answer,
+        note: `번역: ${item.translation}\n\n${item.note}`,
+        reviewType: "reading", reviewKey: item.passage,
+      })
+    ),
+  "bunpou-5": (d, n) => {
+    const p = shuffle(d.longread)[0];
+    return p.questions.slice(0, n).map((q) =>
+      examQuestion({
+        context: { title: p.title, body: p.ruby },
+        prompt: q.question, sub: q.questionTranslation,
+        choices: shuffle(q.choices), answer: q.answer,
+        note: `번역: ${p.translation}\n\n${q.note}`,
+      })
+    );
+  },
+  "bunpou-6": (d, n) => {
+    const p = shuffle(d.infosearch)[0];
+    return p.questions.slice(0, n).map((q) =>
+      examQuestion({
+        context: { title: p.title, body: p.notice, pre: true },
+        prompt: q.question, sub: q.questionTranslation,
+        choices: shuffle(q.choices), answer: q.answer,
+        note: `번역: ${p.translation}\n\n${q.note}`,
+      })
+    );
+  },
+  "choukai-1": (d, n) => examListening(d.task.filter((t) => t.kind === "task"), n),
+  "choukai-2": (d, n) => examListening(d.task.filter((t) => t.kind === "point"), n),
+  "choukai-3": (d, n) =>
+    shuffle(d.utterance).slice(0, n).map((item) =>
+      examQuestion({
+        prompt: item.situation, choices: shuffle(item.choices), answer: item.answer,
+        note: item.note, speech: item.choices.join("。 "), audioOnly: false,
+      })
+    ),
+  "choukai-4": (d, n) =>
+    shuffle(d.response).slice(0, n).map((item) =>
+      examQuestion({
+        prompt: null, choices: shuffle(item.choices), answer: item.answer,
+        note: `${item.line}\n\n${item.note}`, speech: item.line, audioOnly: true,
+      })
+    ),
+};
+
+function examListening(pool, n) {
+  return shuffle(pool).slice(0, n).map((item) =>
+    examQuestion({
+      prompt: item.question, sub: item.questionTranslation,
+      choices: shuffle(item.choices), answer: item.answer,
+      speech: item.lines.map(([, text]) => text).join(" "),
+      transcript: item.lines.map(([who, text]) => `${who}: ${text}`).join("\n"),
+      note: item.note, audioOnly: true,
+    })
+  );
+}
+
+async function buildExamSection(sectionId) {
+  const spec = EXAM_SPEC.find((s) => s.id === sectionId);
+  const data = await buildExamData();
+  const questions = [];
+  for (const m of spec.mondai) {
+    const built = EXAM_BUILDERS[`${sectionId}-${m.n}`](data, m.count);
+    built.forEach((q) => questions.push({ ...q, mondai: m }));
+  }
+  return { spec, questions };
+}
+
+// A 청해 section is unanswerable if the browser has no Japanese voice, so the
+// scripts are revealed as text instead of leaving the whole paper blank. The
+// 청해 쪽지시험 degrades the same way; here it is the difference between a
+// section you can sit and one you cannot.
+function examSpeechAvailable() {
+  return "speechSynthesis" in window;
+}
+
+function examStore() {
+  try {
+    return JSON.parse(localStorage.getItem(EXAM_KEY) || "{}") || {};
+  } catch {
+    return {};
+  }
+}
+
+// Scales a block's raw correct count onto its official maximum. Sections that
+// have never been sat are reported as 미응시 rather than scored 0 — a paper you
+// did not take is not a paper you failed.
+function examBlockScore(store) {
+  return EXAM_SCALE.map((block) => {
+    const taken = block.sections.filter((id) => store[id]);
+    const correct = taken.reduce((a, id) => a + store[id].correct, 0);
+    const total = block.sections.reduce(
+      (a, id) => a + EXAM_SPEC.find((s) => s.id === id).mondai.reduce((b, m) => b + m.count, 0),
+      0
+    );
+    const score = Math.round((correct / total) * block.max);
+    return { ...block, correct, total, score, complete: taken.length === block.sections.length };
+  });
+}
+
+function renderExamStart() {
+  const store = examStore();
+  const host = document.getElementById("exam-sections");
+  host.innerHTML = "";
+  for (const spec of EXAM_SPEC) {
+    const count = spec.mondai.reduce((a, m) => a + m.count, 0);
+    const done = store[spec.id];
+    const card = document.createElement("div");
+    card.className = "exam-section";
+    const head = document.createElement("div");
+    head.className = "exam-section-head";
+    head.innerHTML = `<strong>${spec.label}</strong><span class="exam-meta">${count}문항 · ${spec.minutes}분</span>`;
+    card.append(head);
+    const parts = document.createElement("p");
+    parts.className = "exam-parts";
+    parts.textContent = spec.mondai.map((m) => `問題${m.n} ${m.ko}(${m.count})`).join(" · ");
+    card.append(parts);
+    if (done) {
+      const last = document.createElement("p");
+      last.className = "exam-done";
+      last.textContent = `지난 응시 ${done.correct}/${done.total} · ${done.at}`;
+      card.append(last);
+    }
+    const btn = document.createElement("button");
+    btn.className = "btn";
+    btn.textContent = done ? "다시 풀기" : "시작";
+    btn.addEventListener("click", () => startExamSection(spec.id));
+    card.append(btn);
+    host.append(card);
+  }
+
+  const blocks = examBlockScore(store);
+  const line = document.getElementById("exam-last");
+  if (!blocks.some((b) => b.correct > 0 || b.complete)) {
+    line.hidden = true;
+  } else {
+    const total = blocks.reduce((a, b) => a + b.score, 0);
+    const anyMissing = blocks.some((b) => !b.complete);
+    const pass = total >= EXAM_PASS_TOTAL && blocks.every((b) => b.score >= EXAM_PASS_BLOCK);
+    line.innerHTML =
+      blocks.map((b) => `${b.label} <strong>${b.score}</strong>/${b.max}`).join(" · ") +
+      ` → 합계 <strong>${total}</strong>/180 ` +
+      (anyMissing ? "<em>(아직 안 친 교시가 있습니다)</em>" : pass ? "<em class='exam-pass'>합격선 통과</em>" : "<em class='exam-fail'>합격선 미달</em>");
+    line.hidden = false;
+  }
+}
+
+async function startExamSection(id) {
+  const { spec, questions } = await buildExamSection(id);
+  exam.section = spec;
+  exam.questions = questions;
+  exam.answers = questions.map(() => null);
+  exam.played = questions.map(() => 0);
+  exam.index = 0;
+  exam.reviewing = false;
+  exam.deadline = Date.now() + spec.minutes * 60000;
+  document.getElementById("exam-start").hidden = true;
+  document.getElementById("exam-result").hidden = true;
+  document.getElementById("exam-review-list").hidden = true;
+  document.getElementById("exam-play").hidden = false;
+  if (exam.timer) clearInterval(exam.timer);
+  exam.timer = setInterval(examTick, 1000);
+  examTick();
+  renderExamQuestion();
+}
+
+// The clock is the point of the thing, so it runs down even while you sit on one
+// question, and hitting zero submits what you have rather than discarding it.
+function examTick() {
+  const left = Math.max(0, exam.deadline - Date.now());
+  const el = document.getElementById("exam-clock");
+  const m = Math.floor(left / 60000);
+  const sec = Math.floor((left % 60000) / 1000);
+  el.textContent = `${m}:${String(sec).padStart(2, "0")}`;
+  el.classList.toggle("low", left <= 60000);
+  if (left === 0) submitExam();
+}
+
+function renderExamQuestion() {
+  const q = exam.questions[exam.index];
+  document.getElementById("exam-where").textContent =
+    `${exam.section.label} · ${exam.index + 1}/${exam.questions.length}`;
+  document.getElementById("exam-mondai").textContent = `問題${q.mondai.n}　${q.mondai.ja}`;
+  document.getElementById("exam-instruction").textContent = q.mondai.instruction;
+
+  const body = document.getElementById("exam-body");
+  body.innerHTML = "";
+
+  if (q.context) {
+    const box = document.createElement("div");
+    box.className = q.context.pre ? "exam-context pre" : "exam-context";
+    if (q.context.title) {
+      const h = document.createElement("p");
+      h.className = "exam-context-title";
+      h.textContent = q.context.title;
+      box.append(h);
+    }
+    const t = document.createElement("p");
+    t.lang = "ja";
+    t.textContent = q.context.body;
+    box.append(t);
+    body.append(box);
+  }
+
+  if (q.speech) {
+    const row = document.createElement("div");
+    row.className = "exam-audio";
+    const play = document.createElement("button");
+    play.className = "btn replay-btn";
+    const left = () => MAX_REPLAYS - Math.max(0, exam.played[exam.index] - 1);
+    const paint = () => {
+      const n = left();
+      play.textContent = exam.played[exam.index] === 0 ? "🔊 듣기" : `🔊 다시 듣기 (${n}회)`;
+      play.disabled = exam.played[exam.index] > 0 && n <= 0;
+    };
+    play.addEventListener("click", () => {
+      if (exam.played[exam.index] > 0 && left() <= 0) return;
+      exam.played[exam.index] += 1;
+      speak(q.speech, SPEECH_RATE);
+      paint();
+    });
+    paint();
+    row.append(play);
+    body.append(row);
+    if (!examSpeechAvailable()) {
+      const fallback = document.createElement("p");
+      fallback.className = "exam-fallback";
+      fallback.lang = "ja";
+      fallback.textContent = q.transcript || q.speech;
+      body.append(fallback);
+    } else if (exam.played[exam.index] === 0) {
+      exam.played[exam.index] = 1;
+      speak(q.speech, SPEECH_RATE);
+      paint();
+    }
+  }
+
+  if (q.prompt) {
+    const p = document.createElement("p");
+    p.className = `exam-prompt${q.promptClass === "big" ? " big" : ""}`;
+    p.lang = "ja";
+    p.textContent = q.prompt;
+    body.append(p);
+  }
+  if (q.sub) {
+    const sub = document.createElement("p");
+    sub.className = "exam-sub";
+    sub.textContent = q.sub;
+    body.append(sub);
+  }
+
+  const list = document.createElement("div");
+  list.className = `exam-choices${q.stacked ? " stacked" : ""}`;
+  list.lang = "ja";
+  q.choices.forEach((choice, i) => {
+    const btn = document.createElement("button");
+    btn.className = "choice-btn exam-choice";
+    if (exam.answers[exam.index] === choice) btn.classList.add("picked");
+    btn.innerHTML = `<span class="exam-num">${i + 1}</span>`;
+    btn.append(document.createTextNode(choice));
+    btn.addEventListener("click", () => {
+      exam.answers[exam.index] = choice;
+      renderExamQuestion();
+    });
+    list.append(btn);
+  });
+  body.append(list);
+
+  document.getElementById("exam-prev").disabled = exam.index === 0;
+  document.getElementById("exam-next").disabled = exam.index === exam.questions.length - 1;
+  const unanswered = exam.answers.filter((a) => a === null).length;
+  document.getElementById("exam-submit").textContent =
+    unanswered ? `답안 제출 (${unanswered}문항 미표기)` : "답안 제출";
+}
+
+function examGo(delta) {
+  const next = exam.index + delta;
+  if (next < 0 || next >= exam.questions.length) return;
+  exam.index = next;
+  renderExamQuestion();
+}
+
+function submitExam() {
+  if (exam.timer) clearInterval(exam.timer);
+  exam.timer = null;
+  if (window.speechSynthesis) window.speechSynthesis.cancel();
+  let correct = 0;
+  exam.questions.forEach((q, i) => {
+    const right = exam.answers[i] === q.answer;
+    if (right) correct += 1;
+    // The five もんだい drawn from the quiz files feed the same Leitner schedule
+    // the 쪽지시험 does — a word you missed under exam conditions is exactly a
+    // word to see again tomorrow. The exam-only formats have no key and are
+    // skipped, which is why reviewKey is set rather than inferred.
+    if (q.reviewType && q.reviewKey) recordAnswerOutcome(q.reviewType, q.reviewKey, right);
+  });
+  const store = examStore();
+  store[exam.section.id] = { correct, total: exam.questions.length, at: todayStr() };
+  try {
+    localStorage.setItem(EXAM_KEY, JSON.stringify(store));
+  } catch {
+    /* a full or blocked localStorage must not lose the result on screen */
+  }
+  document.getElementById("exam-play").hidden = true;
+  document.getElementById("exam-result").hidden = false;
+  renderExamResult(correct);
+}
+
+function renderExamResult(correct) {
+  const host = document.getElementById("exam-score");
+  host.innerHTML = "";
+  const head = document.createElement("p");
+  head.className = "exam-raw";
+  head.textContent = `${exam.section.label} — ${correct}/${exam.questions.length}문항`;
+  host.append(head);
+
+  const byMondai = document.createElement("ul");
+  byMondai.className = "exam-breakdown";
+  for (const m of exam.section.mondai) {
+    const qs = exam.questions.filter((q) => q.mondai.n === m.n);
+    const got = qs.filter((q, i) => exam.answers[exam.questions.indexOf(q)] === q.answer).length;
+    const li = document.createElement("li");
+    li.textContent = `問題${m.n} ${m.ko} — ${got}/${qs.length}`;
+    if (got / qs.length < 0.5) li.classList.add("weak");
+    byMondai.append(li);
+  }
+  host.append(byMondai);
+
+  const blocks = examBlockScore(examStore());
+  const total = blocks.reduce((a, b) => a + b.score, 0);
+  const scale = document.createElement("div");
+  scale.className = "exam-scale";
+  scale.innerHTML =
+    blocks
+      .map(
+        (b) =>
+          `<p>${b.label} <strong>${b.score}</strong>/${b.max}${b.complete ? "" : " <em>(미응시 교시 포함)</em>"}${b.complete && b.score < EXAM_PASS_BLOCK ? " <em class='exam-fail'>기준점 미달</em>" : ""}</p>`
+      )
+      .join("") + `<p class="exam-total">합계 <strong>${total}</strong> / 180　(합격 ${EXAM_PASS_TOTAL}점, 구분별 ${EXAM_PASS_BLOCK}점)</p>`;
+  host.append(scale);
+}
+
+function renderExamReview() {
+  const host = document.getElementById("exam-review-list");
+  host.innerHTML = "";
+  exam.questions.forEach((q, i) => {
+    const right = exam.answers[i] === q.answer;
+    const card = document.createElement("div");
+    card.className = `card exam-review-item ${right ? "ok" : "ng"}`;
+    const head = document.createElement("p");
+    head.className = "exam-review-head";
+    head.textContent = `${i + 1}. 問題${q.mondai.n} ${q.mondai.ko} — ${right ? "정답" : "오답"}`;
+    card.append(head);
+    if (q.context) {
+      const ctx = document.createElement("p");
+      ctx.className = q.context.pre ? "exam-context pre" : "exam-context";
+      ctx.lang = "ja";
+      ctx.textContent = q.context.body;
+      card.append(ctx);
+    }
+    if (q.transcript || (q.speech && !q.prompt)) {
+      const tr = document.createElement("p");
+      tr.className = "exam-transcript";
+      tr.lang = "ja";
+      tr.textContent = q.transcript || q.speech;
+      card.append(tr);
+    }
+    if (q.prompt) {
+      const p = document.createElement("p");
+      p.className = "exam-review-prompt";
+      p.lang = "ja";
+      p.textContent = q.prompt;
+      card.append(p);
+    }
+    const ans = document.createElement("p");
+    ans.className = "exam-review-answer";
+    ans.lang = "ja";
+    ans.textContent = right
+      ? `정답 ${q.answer}`
+      : `정답 ${q.answer}　/　내 답 ${exam.answers[i] === null ? "(무표기)" : exam.answers[i]}`;
+    card.append(ans);
+    if (q.note) {
+      const note = document.createElement("p");
+      note.className = "exam-review-note";
+      note.lang = "ja";
+      note.textContent = q.note;
+      card.append(note);
+    }
+    host.append(card);
+  });
+  host.hidden = false;
+}
+
+function setupExam() {
+  document.getElementById("exam-prev").addEventListener("click", () => examGo(-1));
+  document.getElementById("exam-next").addEventListener("click", () => examGo(1));
+  document.getElementById("exam-submit").addEventListener("click", submitExam);
+  document.getElementById("exam-quit").addEventListener("click", () => {
+    if (exam.timer) clearInterval(exam.timer);
+    exam.timer = null;
+    if (window.speechSynthesis) window.speechSynthesis.cancel();
+    document.getElementById("exam-play").hidden = true;
+    document.getElementById("exam-start").hidden = false;
+    renderExamStart();
+  });
+  document.getElementById("exam-review").addEventListener("click", renderExamReview);
+  document.getElementById("exam-back").addEventListener("click", () => {
+    document.getElementById("exam-result").hidden = true;
+    document.getElementById("exam-review-list").hidden = true;
+    document.getElementById("exam-start").hidden = false;
+    renderExamStart();
+  });
+}
+
 // ---------- Init ----------
 async function init() {
   setupTabs();
   setupQuiz();
   setupRadicalMask();
+  setupExam();
   const res = await fetch(`data/${CURRENT_LEVEL}/plan.json`);
   const plan = await res.json();
   renderTopbar(plan);

@@ -22,6 +22,7 @@
   <nav class="tabs">
     <button class="tab-btn active" data-tab="quiz">쪽지시험</button>
     <button class="tab-btn" data-tab="radical">한자 기초</button>
+    <button class="tab-btn" data-tab="exam">모의고사</button>
   </nav>
 
   <main>
@@ -81,6 +82,44 @@
         <button id="radical-mask" class="btn">🙈 뜻 가리고 외우기</button>
       </div>
       <div id="radical-groups"></div>
+    </section>
+
+    <!-- The real exam's shape: three sittings, the official もんだい order and
+         counts, the official 25/55/35 minutes and the 180-point scale. Unlike
+         쪽지시험 nothing is marked until you submit — a quiz that answers after
+         every question is a different exercise. -->
+    <section id="tab-exam" class="tab-panel">
+      <div class="card" id="exam-start">
+        <h2>N4 모의고사</h2>
+        <p class="exam-intro">실제 JLPT N4와 같은 구성·문항수·시간입니다. 한 교시씩 따로 치세요. <strong>제출하기 전에는 정답을 알려주지 않습니다.</strong></p>
+        <p id="exam-last" class="exam-last" hidden></p>
+        <div id="exam-sections"></div>
+        <p class="exam-foot">채점은 실제와 같이 언어지식·독해 120점 + 청해 60점 = 180점이고, 합격선은 합계 90점에 구분별 19점입니다. 한자 읽기·표기·문법·독해 문항은 쪽지시험과 같은 데이터에서 매번 새로 뽑히고, 틀린 것은 복습 노트에 쌓입니다.</p>
+      </div>
+
+      <div class="card" id="exam-play" hidden>
+        <div class="exam-bar">
+          <span id="exam-where" class="exam-where"></span>
+          <span id="exam-clock" class="exam-clock"></span>
+        </div>
+        <h3 id="exam-mondai" class="exam-mondai" lang="ja"></h3>
+        <p id="exam-instruction" class="exam-instruction" lang="ja"></p>
+        <div id="exam-body"></div>
+        <div class="exam-nav">
+          <button id="exam-prev" class="btn secondary">← 이전</button>
+          <button id="exam-next" class="btn secondary">다음 →</button>
+        </div>
+        <button id="exam-submit" class="btn">답안 제출</button>
+        <button id="exam-quit" class="btn secondary exam-quit">그만두기</button>
+      </div>
+
+      <div class="card" id="exam-result" hidden>
+        <h2>채점 결과</h2>
+        <div id="exam-score"></div>
+        <button id="exam-review" class="btn">문제 다시 보기</button>
+        <button id="exam-back" class="btn secondary">모의고사 목록으로</button>
+      </div>
+      <div id="exam-review-list" hidden></div>
     </section>
   </main>
 

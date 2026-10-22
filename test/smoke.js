@@ -207,12 +207,19 @@ async function main() {
         assert(lang === "ja", `${sel} is marked lang="ja" so kanji use Japanese glyph shapes (got "${lang}")`);
       }
 
-      // Two tabs since 2026-10-17; the plan reaches the screen as the topbar line.
+      // Two tabs since 2026-10-17 (the plan reaches the screen as the topbar
+      // line), plus 모의고사 from 2026-10-22. Three is the most that fits one
+      // phone row at 390px, which is why the count is pinned and not just the
+      // names — a fourth would wrap and the row would be 3+1.
       const tabs = await page.$$eval(".tab-btn", (els) => els.map((e) => e.textContent));
       assert(
-        tabs.join(" | ") === "쪽지시험 | 한자 기초",
-        `only the two tabs that get used are left (got "${tabs.join(" | ")}")`
+        tabs.join(" | ") === "쪽지시험 | 한자 기초 | 모의고사",
+        `only the tabs that get used are there (got "${tabs.join(" | ")}")`
       );
+      const rows = await page.evaluate(
+        () => new Set([...document.querySelectorAll(".tab-btn")].map((b) => b.getBoundingClientRect().top)).size
+      );
+      assert(rows === 1, `the tab row still fits one line on a phone (${rows} rows)`);
       assert(await page.isVisible("#quiz-start"), "쪽지시험 is the tab that opens");
       const topLine = (await page.textContent("#today-task")).trim();
       assert(topLine.length > 0, "the topbar still says what to do today");
@@ -1336,6 +1343,250 @@ async function main() {
         worst.bottom <= PHONE.height,
         `the longest chunk explanation leaves the choices on screen (last choice ends at y=${worst.bottom} after tapping ${worst.chunk}, fold ${PHONE.height})`
       );
+      await page.close();
+    }
+
+    // --- exam.json keeps the shape every もんだい renderer assumes ---
+    // Ten formats live in one file because the exam page is their only consumer;
+    // the per-shape invariants are checked here instead of per file.
+    {
+      const ex = JSON.parse(fs.readFileSync(path.join(ROOT, "data/n4/exam.json"), "utf8"));
+      const FOUR = ["context", "synonym", "usage"];
+      const THREE = ["utterance", "response"];
+      for (const key of [...FOUR, ...THREE]) {
+        const list = ex[key];
+        assert(list && list.length >= 6, `exam.json ${key} has enough entries (${list ? list.length : 0})`);
+        const want = FOUR.includes(key) ? 4 : 3;
+        const bad = list.filter(
+          (e) => e.choices.length !== want || new Set(e.choices).size !== want || !e.choices.includes(e.answer)
+        );
+        assert(bad.length === 0, `every ${key} entry has ${want} distinct choices including its answer (${bad.length} bad)`);
+        const thin = list.filter((e) => !e.note || e.note.length < 20);
+        assert(thin.length === 0, `every ${key} entry explains itself (${thin.length} thin)`);
+      }
+      // 문맥규정 and 문법1 share the ＿＿＿ blank convention; 유의표현 does not.
+      assert(
+        ex.context.every((e) => e.sentence.includes("＿＿＿")),
+        "every 문맥규정 sentence carries the blank the instruction promises"
+      );
+      for (const e of ex.cloze) {
+        assert(e.blanks.length === 4, `${e.title} has four blanks (${e.blanks.length})`);
+        e.blanks.forEach((b, i) => {
+          assert(e.ruby.includes(`＿${i + 1}＿`), `${e.title} marks blank ${i + 1} in the text`);
+          assert(b.choices.length === 4 && b.choices.includes(b.answer), `${e.title} blank ${i + 1} is answerable`);
+        });
+        assert(e.translation && !/[぀-ヿ一-鿿]/.test(e.translation), `${e.title} has a Korean translation with no Japanese left in it`);
+      }
+      for (const e of [...ex.longread, ...ex.infosearch]) {
+        const want = ex.longread.includes(e) ? 3 : 2;
+        assert(e.questions.length === want, `${e.title} carries ${want} questions (${e.questions.length})`);
+        assert(
+          e.questions.every((q) => q.choices.length === 4 && new Set(q.choices).size === 4 && q.choices.includes(q.answer)),
+          `${e.title}'s questions are answerable`
+        );
+        assert(
+          e.questions.every((q) => q.questionTranslation && !/[一-鿿]/.test(q.questionTranslation)),
+          `${e.title}'s questions each carry a Korean line with no kanji left in it`
+        );
+      }
+      // The 청해 scripts are spoken by the Web Speech API, so a stray Latin
+      // letter is read in the wrong language rather than rendered oddly.
+      const spoken = [
+        ...ex.task.flatMap((e) => e.lines.map(([, t]) => t)),
+        ...ex.response.map((e) => e.line),
+        ...ex.utterance.flatMap((e) => e.choices),
+      ];
+      const latin = spoken.filter((t) => /[A-Za-z]/.test(t));
+      assert(latin.length === 0, `no spoken line carries Latin letters (${latin.slice(0, 2).join(" | ")})`);
+      const kinds = { task: 0, point: 0 };
+      ex.task.forEach((e) => { kinds[e.kind] = (kinds[e.kind] || 0) + 1; });
+      assert(
+        kinds.task >= 8 && kinds.point >= 7,
+        `enough 課題理解/ポイント理解 items to fill 問題1 and 問題2 (${kinds.task}/${kinds.point}, need 8/7)`
+      );
+      assert(
+        ex.task.every((e) => e.lines.length >= 2),
+        "every 청해 item is a dialogue rather than one line"
+      );
+      // A duplicate prompt means two questions can be drawn that read the same.
+      for (const [key, field] of [["context", "sentence"], ["synonym", "sentence"], ["usage", "word"], ["response", "line"]]) {
+        const vals = ex[key].map((e) => e[field]);
+        assert(new Set(vals).size === vals.length, `no two ${key} entries share a ${field}`);
+      }
+    }
+
+    // --- Every section builds to the official shape ---
+    // 85 questions across three sittings, in the counts JEES publishes. The
+    // build draws five もんだい from the quiz files, so this runs the real
+    // builders rather than trusting the spec it is checking.
+    {
+      const page = await browser.newPage({ viewport: PHONE });
+      await page.goto(URL, { waitUntil: "networkidle" });
+      const built = await page.evaluate(async () => {
+        const out = [];
+        for (const spec of EXAM_SPEC) {
+          const { questions } = await buildExamSection(spec.id);
+          const per = {};
+          questions.forEach((q) => { per[q.mondai.n] = (per[q.mondai.n] || 0) + 1; });
+          out.push({
+            id: spec.id,
+            want: spec.mondai.map((m) => `${m.n}:${m.count}`).join(","),
+            got: spec.mondai.map((m) => `${m.n}:${per[m.n] || 0}`).join(","),
+            total: questions.length,
+            broken: questions.filter(
+              (q) => !q.choices || q.choices.length < 3 || new Set(q.choices).size !== q.choices.length || !q.choices.includes(q.answer)
+            ).length,
+            noNote: questions.filter((q) => !q.note).length,
+          });
+        }
+        return out;
+      });
+      let grand = 0;
+      for (const sec of built) {
+        assert(sec.got === sec.want, `${sec.id} fills every もんだい to its official count (want ${sec.want}, got ${sec.got})`);
+        assert(sec.broken === 0, `${sec.id}: every question has distinct choices containing its answer (${sec.broken} broken)`);
+        assert(sec.noNote === 0, `${sec.id}: every question carries an explanation for the review (${sec.noNote} without)`);
+        grand += sec.total;
+      }
+      assert(grand === 85, `the three sittings come to the real exam's 85 questions (got ${grand})`);
+      await page.close();
+    }
+
+    // --- 表記 distractors always exist, and look like the answer ---
+    // A wrong spelling you can throw out without reading the kanji tests
+    // nothing: 飛行機 against 有名だ is settled by the trailing kana alone. The
+    // generator prefers a radical-group sibling swap, then a word of the same
+    // kanji/kana shape. お正月 is the one word with no same-shape partner in the
+    // file, which is why the last-resort fill has to be there at all.
+    {
+      const page = await browser.newPage({ viewport: PHONE });
+      await page.goto(URL, { waitUntil: "networkidle" });
+      const r = await page.evaluate(async () => {
+        const d = await buildExamData();
+        const words = d.kanji.filter((v) => /[一-鿿]/.test(v.word));
+        let short = 0, dup = 0, closeN = 0, total = 0;
+        const close = (w, g) => {
+          if (g.length === w.length && [...g].filter((c, i) => c !== w[i]).length === 1) return true;
+          const cs = new Set(w);
+          return [...g].some((c) => cs.has(c));
+        };
+        for (const item of words) {
+          const got = kanjiLookalikes(item.word, d.kanji);
+          if (got.length !== 3) short++;
+          if (new Set(got).size !== 3 || got.includes(item.word)) dup++;
+          total += got.length;
+          closeN += got.filter((g) => close(item.word, g)).length;
+        }
+        return { words: words.length, short, dup, closePct: Math.round((closeN / total) * 100) };
+      });
+      assert(r.short === 0, `every kanji word yields three distractors (${r.short} short of ${r.words})`);
+      assert(r.dup === 0, `no distractor repeats or equals the answer (${r.dup} bad)`);
+      assert(r.closePct >= 80, `most distractors are a one-character swap or share a character (${r.closePct}%)`);
+      await page.close();
+    }
+
+    // --- Nothing is marked until the paper is submitted ---
+    // That is the whole difference from 쪽지시험. A picked choice is styled
+    // "picked", never "correct"/"wrong", and no note is on screen.
+    {
+      const page = await browser.newPage({ viewport: PHONE });
+      await page.goto(URL, { waitUntil: "networkidle" });
+      await page.click('.tab-btn[data-tab="exam"]');
+      await page.evaluate(() => startExamSection("moji"));
+      await page.waitForSelector(".exam-choice");
+      await page.locator(".exam-choice").first().click();
+      const marks = await page.evaluate(() => ({
+        picked: document.querySelectorAll(".exam-choice.picked").length,
+        graded: document.querySelectorAll(".exam-choice.correct, .exam-choice.wrong").length,
+        notes: document.querySelectorAll("#exam-body .exam-review-note").length,
+        resultHidden: document.getElementById("exam-result").hidden,
+      }));
+      assert(marks.picked === 1, `the chosen answer is marked as picked (${marks.picked})`);
+      assert(marks.graded === 0, `no choice is graded before submitting (${marks.graded} graded)`);
+      assert(marks.notes === 0, `no explanation is on screen during the paper (${marks.notes})`);
+      assert(marks.resultHidden, "the score screen stays hidden until the paper is in");
+      await page.close();
+    }
+
+    // --- The official scale, including the 과락 and the untaken paper ---
+    // 언어지식·독해 is one 120-point block sat as two papers, 청해 its own 60.
+    // A paper never sat reports 미응시 rather than scoring zero — a paper you
+    // did not take is not a paper you failed.
+    {
+      const page = await browser.newPage({ viewport: PHONE });
+      await page.goto(URL, { waitUntil: "networkidle" });
+      await page.click('.tab-btn[data-tab="exam"]');
+      const scored = await page.evaluate(async () => {
+        await startExamSection("moji");
+        const n = exam.questions.length;
+        // 20 right of 28, the rest wrong, so the scale has something to scale.
+        exam.answers = exam.questions.map((q, i) => (i < 20 ? q.answer : q.choices.find((c) => c !== q.answer)));
+        submitExam();
+        const blocks = examBlockScore(examStore());
+        return {
+          raw: `${exam.answers.filter((a, i) => a === exam.questions[i].answer).length}/${n}`,
+          goi: blocks[0], choukai: blocks[1],
+          text: document.getElementById("exam-score").textContent,
+        };
+      });
+      assert(scored.raw === "20/28", `the fixture answered what it meant to (${scored.raw})`);
+      // 20 correct of the 57 that make up the 120-point block.
+      assert(
+        scored.goi.score === Math.round((20 / 57) * 120),
+        `언어지식·독해 scales onto 120 (got ${scored.goi.score}, expected ${Math.round((20 / 57) * 120)})`
+      );
+      assert(scored.goi.complete === false, "the block knows 문법·독해 has not been sat yet");
+      assert(scored.choukai.score === 0 && scored.choukai.complete === false, "an untaken 청해 is reported as not sat");
+      assert(/미응시/.test(scored.text), "the score screen says a paper is missing rather than implying a zero");
+      await page.close();
+    }
+
+    // --- A missed exam question comes back in the 복습 노트 ---
+    // The five もんだい drawn from the quiz files feed the same Leitner schedule;
+    // a word you missed under a clock is exactly a word to see again tomorrow.
+    {
+      const page = await browser.newPage({ viewport: PHONE });
+      await page.goto(URL, { waitUntil: "networkidle" });
+      await page.click('.tab-btn[data-tab="exam"]');
+      const probe = await page.evaluate(async () => {
+        await startExamSection("moji");
+        const q = exam.questions.find((x) => x.reviewType === "kanji");
+        exam.answers = exam.questions.map((x) => (x === q ? x.choices.find((c) => c !== x.answer) : x.answer));
+        submitExam();
+        const store = JSON.parse(localStorage.getItem("jlpt_review_n4") || "null");
+        return { key: q.reviewKey, entry: store && store.types.kanji && store.types.kanji[q.reviewKey] };
+      });
+      assert(probe.entry, `the missed exam word was scheduled (${probe.key})`);
+      assert(probe.entry.box === 0, `a missed exam word goes back to box 0 (got ${probe.entry.box})`);
+      await page.close();
+    }
+
+    // --- A full paper stays usable on a phone ---
+    // Measured at 390x844 like every other budget in CLAUDE.md. The longest
+    // question in the file is a 중문 passage plus four choices, so this walks
+    // every question of the longest section rather than whichever one loads.
+    {
+      const page = await browser.newPage({ viewport: PHONE });
+      await page.goto(URL, { waitUntil: "networkidle" });
+      await page.click('.tab-btn[data-tab="exam"]');
+      await page.evaluate(() => startExamSection("bunpou"));
+      await page.waitForSelector(".exam-choice");
+      const n = await page.evaluate(() => exam.questions.length);
+      let worst = 0;
+      for (let i = 0; i < n; i++) {
+        await page.evaluate((k) => { exam.index = k; renderExamQuestion(); }, i);
+        const over = await page.evaluate(() => {
+          const el = document.documentElement;
+          return el.scrollWidth - el.clientWidth;
+        });
+        worst = Math.max(worst, over);
+      }
+      assert(worst === 0, `no question scrolls sideways at ${PHONE.width}px (worst overflow ${worst}px)`);
+      // The clock has to stay put while a long passage scrolls under it.
+      const sticky = await page.evaluate(
+        () => getComputedStyle(document.querySelector(".exam-bar")).position
+      );
+      assert(sticky === "sticky", `the clock stays on screen while the paper scrolls (position: ${sticky})`);
       await page.close();
     }
 
