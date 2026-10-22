@@ -1469,6 +1469,16 @@ function kanjiLookalikes(word, pool) {
   return picked;
 }
 
+// No word may be asked twice in one paper. 問題1 prints 飛行機 and asks for its
+// reading; 問題2 then asks you to spell ひこうき a few questions later, with the
+// answer already on the paper above — and both write to the same review key, so
+// whichever lands second silently overwrites the other outcome. The two もんだい
+// draw from kanji.json independently, which put a duplicate in 12% of papers
+// over 1,000 generated. buildExamSection threads the keys already used through.
+function pickUnused(items, used, n) {
+  return shuffle(items).filter((v) => !used.has(v.word)).slice(0, n);
+}
+
 function examQuestion(fields) {
   return { context: null, sub: null, note: "", reviewType: null, reviewKey: null, speech: null, ...fields };
 }
@@ -1477,8 +1487,8 @@ function examQuestion(fields) {
 // the data cannot fill it — buildExamSection asserts the total, so a short file
 // shows up as a failed test rather than a quietly shorter exam.
 const EXAM_BUILDERS = {
-  "moji-1": (d, n) =>
-    shuffle(d.kanji).slice(0, n).map((item) =>
+  "moji-1": (d, n, used) =>
+    pickUnused(d.kanji, used, n).map((item) =>
       examQuestion({
         prompt: item.word, promptClass: "big",
         choices: shuffle([item.reading, ...pickReadingDistractors(d.kanji, item)]),
@@ -1487,8 +1497,8 @@ const EXAM_BUILDERS = {
         reviewType: "kanji", reviewKey: item.word,
       })
     ),
-  "moji-2": (d, n) =>
-    shuffle(d.kanji.filter((v) => /[一-鿿]/.test(v.word))).slice(0, n).map((item) =>
+  "moji-2": (d, n, used) =>
+    pickUnused(d.kanji.filter((v) => /[一-鿿]/.test(v.word)), used, n).map((item) =>
       examQuestion({
         prompt: item.reading, promptClass: "big", sub: item.meaning,
         choices: shuffle([item.word, ...kanjiLookalikes(item.word, d.kanji)]),
@@ -1600,9 +1610,13 @@ async function buildExamSection(sectionId) {
   const spec = EXAM_SPEC.find((s) => s.id === sectionId);
   const data = await buildExamData();
   const questions = [];
+  const used = new Set(); // review keys already asked on this paper
   for (const m of spec.mondai) {
-    const built = EXAM_BUILDERS[`${sectionId}-${m.n}`](data, m.count);
-    built.forEach((q) => questions.push({ ...q, mondai: m }));
+    const built = EXAM_BUILDERS[`${sectionId}-${m.n}`](data, m.count, used);
+    built.forEach((q) => {
+      if (q.reviewKey) used.add(q.reviewKey);
+      questions.push({ ...q, mondai: m });
+    });
   }
   return { spec, questions };
 }

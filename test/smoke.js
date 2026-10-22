@@ -1452,6 +1452,46 @@ async function main() {
       await page.close();
     }
 
+    // --- A paper never asks the same thing twice ---
+    // 問題1 prints 飛行機 and asks for its reading; 問題2 then asks you to spell
+    // ひこうき with the answer already on the paper above. The two もんだい drew
+    // from kanji.json independently, which put a duplicate in 12% of 문자·어휘
+    // papers — and because both carry the same reviewKey, whichever landed
+    // second silently overwrote the other outcome in the schedule. 40 papers
+    // per section catches a regression of that rate with room to spare.
+    {
+      const page = await browser.newPage({ viewport: PHONE });
+      await page.goto(URL, { waitUntil: "networkidle" });
+      const r = await page.evaluate(async () => {
+        const out = { papers: 0, dupKey: [], dupQuestion: [] };
+        for (let i = 0; i < 40; i++) {
+          for (const spec of EXAM_SPEC) {
+            const { questions } = await buildExamSection(spec.id);
+            out.papers++;
+            const keys = questions.map((q) => q.reviewKey).filter(Boolean);
+            const seen = new Set();
+            for (const k of keys) {
+              if (seen.has(k)) out.dupKey.push(`${spec.id}:${k}`);
+              seen.add(k);
+            }
+            const prompts = questions.map((q) => `${q.mondai.n}|${q.prompt}|${q.choices.join("/")}`);
+            if (new Set(prompts).size !== prompts.length) out.dupQuestion.push(spec.id);
+          }
+        }
+        return out;
+      });
+      assert(r.papers === 120, `the sweep built every section 40 times (${r.papers})`);
+      assert(
+        r.dupKey.length === 0,
+        `no paper asks the same word twice (${r.dupKey.length}: ${[...new Set(r.dupKey)].slice(0, 3).join(" ")})`
+      );
+      assert(
+        r.dupQuestion.length === 0,
+        `no paper repeats a question (${[...new Set(r.dupQuestion)].join(" ")})`
+      );
+      await page.close();
+    }
+
     // --- 表記 distractors always exist, and look like the answer ---
     // A wrong spelling you can throw out without reading the kanji tests
     // nothing: 飛行機 against 有名だ is settled by the trailing kana alone. The
