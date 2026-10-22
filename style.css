@@ -194,10 +194,12 @@ main {
 
 .buildstamp { text-align: center; color: var(--muted); font-size: 0.72rem; padding: 16px 0 24px; }
 
-/* 한자 기초 tab. The tab row is four buttons wide now, so it wraps rather than
-   squeezing the labels below readable size on a phone. */
+/* The tab row wraps rather than squeezing labels below readable size. Three
+   tabs fit one phone row at 390px (342px of track, ~114px each, and the widest
+   label 한자 기초 needs ~74px); the basis keeps a fourth from silently
+   shrinking them instead of wrapping. */
 .tabs { flex-wrap: wrap; }
-.tab-btn { flex: 1 1 calc(50% - 4px); }
+.tab-btn { flex: 1 1 calc(33.333% - 6px); }
 .radical-intro { color: var(--muted); font-size: 0.85rem; line-height: 1.6; margin: 0; }
 .radical-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
 .radical-glyph { font-size: 2rem; font-weight: 700; line-height: 1; white-space: nowrap; }
@@ -231,3 +233,86 @@ main {
 #radical-groups.masked .kanji-row:not(.open) .kanji-sense,
 #radical-groups.masked .kanji-row:not(.open) .kanji-note { visibility: hidden; }
 #radical-mask { margin-top: 12px; font-size: 0.9rem; padding: 8px 12px; }
+
+/* ---------- N4 모의고사 ---------- */
+/* The same treatment #quiz-say applies by hand, as a class: 이전/다음/그만두기 sit
+   one tap from 답안 제출, and four identical accent buttons stacked on a phone
+   is a mis-tap waiting to happen. */
+.btn.secondary { background: none; color: var(--accent); border: 1px solid var(--accent); }
+.btn.secondary:disabled { color: var(--muted); border-color: var(--border); cursor: default; }
+
+.exam-intro { color: var(--muted); font-size: 0.85rem; line-height: 1.6; margin: 0 0 12px; }
+.exam-foot { color: var(--muted); font-size: 0.78rem; line-height: 1.6; margin: 14px 0 0; }
+.exam-last { font-size: 0.85rem; line-height: 1.7; margin: 0 0 14px; }
+.exam-pass { color: var(--good); font-style: normal; font-weight: 700; }
+.exam-fail { color: var(--bad); font-style: normal; font-weight: 700; }
+
+.exam-section { border: 1px solid var(--border); border-radius: 12px; padding: 12px; margin-bottom: 10px; }
+.exam-section-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.exam-meta { color: var(--muted); font-size: 0.8rem; white-space: nowrap; }
+.exam-parts { color: var(--muted); font-size: 0.75rem; line-height: 1.6; margin: 6px 0 10px; }
+.exam-done { font-size: 0.8rem; margin: 0 0 10px; color: var(--muted); }
+.exam-section .btn { width: 100%; }
+
+/* The clock is the feature, so it stays put while the paper scrolls under it. */
+.exam-bar {
+  position: sticky; top: 0; z-index: 2;
+  display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  background: var(--card); border-bottom: 1px solid var(--border);
+  margin: -16px -16px 12px; padding: 12px 16px;
+}
+.exam-where { color: var(--muted); font-size: 0.8rem; }
+.exam-clock { font-size: 1.1rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.exam-clock.low { color: var(--bad); }
+.exam-mondai { margin: 0 0 4px; font-size: 0.95rem; }
+.exam-instruction { color: var(--muted); font-size: 0.8rem; line-height: 1.6; margin: 0 0 12px; }
+
+.exam-context {
+  border: 1px solid var(--border); border-radius: 10px; padding: 12px;
+  font-size: 0.95rem; line-height: 1.9; margin: 0 0 12px; white-space: pre-line;
+}
+.exam-context.pre { font-size: 0.9rem; line-height: 1.8; }
+.exam-context-title { font-weight: 700; margin: 0 0 8px; }
+.exam-context p { margin: 0; }
+.exam-audio { margin: 0 0 10px; }
+.exam-fallback { border: 1px dashed var(--border); border-radius: 10px; padding: 10px; font-size: 0.9rem; line-height: 1.8; white-space: pre-line; margin: 0 0 12px; }
+
+/* 1.15rem rather than the 쪽지시험's 2.6rem: an exam prompt is a sentence, and
+   at 390px the oversized one pushed the four choices off the screen. The
+   single-word prompts (漢字読み, 表記, 用法) get .big instead. */
+.exam-prompt { font-size: 1.15rem; line-height: 1.9; margin: 0 0 6px; }
+.exam-prompt.big { font-size: 1.9rem; line-height: 1.5; text-align: center; margin: 8px 0; }
+.exam-sub { color: var(--muted); font-size: 0.85rem; line-height: 1.6; margin: 0 0 12px; }
+.exam-choices { display: grid; gap: 8px; margin-top: 10px; }
+.exam-choice { display: flex; gap: 10px; align-items: flex-start; line-height: 1.7; }
+.exam-choices.stacked .exam-choice { font-size: 0.9rem; }
+.exam-num {
+  flex: 0 0 auto; width: 22px; height: 22px; border-radius: 50%;
+  background: var(--bg); border: 1px solid var(--border);
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 0.78rem; color: var(--muted);
+}
+/* Picked, not correct: nothing is marked right or wrong until the paper is in. */
+.exam-choice.picked { border-color: var(--accent); background: var(--accent); color: var(--accent-text); }
+.exam-choice.picked .exam-num { background: var(--accent-text); color: var(--accent); border-color: var(--accent-text); }
+
+.exam-nav { display: flex; gap: 8px; margin: 14px 0 10px; }
+.exam-nav .btn { flex: 1; }
+#exam-submit { width: 100%; }
+.exam-quit { width: 100%; margin-top: 8px; }
+
+.exam-raw { font-size: 1rem; font-weight: 700; margin: 0 0 10px; }
+.exam-breakdown { list-style: none; padding: 0; margin: 0 0 14px; font-size: 0.88rem; line-height: 1.9; }
+.exam-breakdown .weak { color: var(--bad); font-weight: 700; }
+.exam-scale { border-top: 1px solid var(--border); padding-top: 10px; font-size: 0.9rem; }
+.exam-scale p { margin: 0 0 4px; }
+.exam-total { font-size: 1rem; margin-top: 8px !important; }
+#exam-result .btn { width: 100%; margin-top: 8px; }
+
+.exam-review-item { border-left: 4px solid var(--good); }
+.exam-review-item.ng { border-left-color: var(--bad); }
+.exam-review-head { font-size: 0.8rem; color: var(--muted); margin: 0 0 8px; }
+.exam-review-prompt { font-size: 1rem; line-height: 1.8; margin: 0 0 8px; }
+.exam-transcript { border: 1px dashed var(--border); border-radius: 10px; padding: 10px; font-size: 0.9rem; line-height: 1.8; white-space: pre-line; margin: 0 0 8px; }
+.exam-review-answer { font-size: 0.95rem; font-weight: 700; margin: 0 0 8px; }
+.exam-review-note { color: var(--muted); font-size: 0.85rem; line-height: 1.7; margin: 0; white-space: pre-line; }
