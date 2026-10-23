@@ -1346,6 +1346,167 @@ async function main() {
       await page.close();
     }
 
+    // --- strokes.json covers every character the app can ask you to write ---
+    // KanjiVG data (CC BY-SA 3.0), so the licence header travels with it — a
+    // test, not a comment, because dropping it is the one way redistributing
+    // this becomes a problem.
+    {
+      const file = JSON.parse(fs.readFileSync(path.join(ROOT, "data/strokes.json"), "utf8"));
+      assert(/CC BY-SA/.test(file.license || ""), `strokes.json carries its licence (got "${file.license}")`);
+      assert(/KanjiVG/.test(file.source || ""), `strokes.json names its source (got "${file.source}")`);
+      const strokes = file.strokes;
+      const kanji = JSON.parse(fs.readFileSync(path.join(ROOT, "data/n4/kanji.json"), "utf8"));
+      const vocab = JSON.parse(fs.readFileSync(path.join(ROOT, "data/n4/vocab.json"), "utf8"));
+      const chars = new Set();
+      for (const e of [...kanji, ...vocab]) for (const c of e.word.match(/[一-鿿]/gu) || []) chars.add(c);
+      const missing = [...chars].filter((c) => !strokes[c]);
+      assert(
+        missing.length === 0,
+        `every kanji in the word files has stroke data (${missing.length} missing: ${missing.slice(0, 6).join("")})`
+      );
+      const broken = Object.entries(strokes).filter(
+        ([, list]) => !Array.isArray(list) || list.length === 0 || list.some((d) => !/^[Mm]/.test(d))
+      );
+      assert(broken.length === 0, `every character has ordered path data (${broken.length} broken)`);
+      assert(chars.size > 300, `the set is the real one, not a sample (${chars.size} characters)`);
+    }
+
+    // --- 쓰기 연습 is recall first, and the pad actually takes ink ---
+    {
+      const page = await browser.newPage({ viewport: PHONE });
+      await page.goto(URL, { waitUntil: "networkidle" });
+      await page.click("#start-writing");
+      await page.waitForSelector("#write-prompt");
+
+      const card = await page.evaluate(() => ({
+        size: write.pool.length,
+        trace: write.trace,
+        allHaveStrokes: write.pool.every((c) => _strokeData[c.char] && _strokeData[c.char].length),
+        char: write.pool[0].char,
+        word: write.pool[0].word.word,
+        prompt: document.getElementById("write-prompt").textContent,
+        guideStrokes: document.querySelectorAll("#write-guide .write-stroke").length,
+      }));
+      assert(card.size === 8, `a writing round is eight characters (${card.size})`);
+      assert(card.allHaveStrokes, "every card drawn into the round has stroke data");
+      // The prompt blanks the character you are being asked to write, or the
+      // answer is printed above the pad.
+      assert(
+        !card.prompt.includes(card.char) && card.prompt.includes("〇"),
+        `the prompt hides the character (${card.char} in "${card.prompt}")`
+      );
+      assert(
+        card.guideStrokes === await page.evaluate(() => _strokeData[write.pool[0].char].length),
+        "the guide carries one path per stroke"
+      );
+      // Starts OFF: a glyph already on the pad turns the exercise into copying.
+      assert(card.trace === false, "the 밑글씨 guide starts off, so the first attempt is from memory");
+      const visible = await page.evaluate(
+        () => getComputedStyle(document.querySelector("#write-guide .write-stroke")).stroke
+      );
+      assert(visible === "rgba(0, 0, 0, 0)", `the guide really is invisible, not just unflagged (${visible})`);
+
+      // Draw with the mouse the way a finger would, and check ink landed.
+      const box = await page.locator("#write-canvas").boundingBox();
+      for (const [x1, y1, x2, y2] of [[0.3, 0.3, 0.7, 0.4], [0.5, 0.2, 0.5, 0.8]]) {
+        await page.mouse.move(box.x + box.width * x1, box.y + box.height * y1);
+        await page.mouse.down();
+        await page.mouse.move(box.x + box.width * x2, box.y + box.height * y2, { steps: 10 });
+        await page.mouse.up();
+      }
+      const inked = await page.evaluate(() => {
+        const c = document.getElementById("write-canvas");
+        const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+        let n = 0;
+        for (let i = 3; i < d.length; i += 4) if (d[i] > 0) n++;
+        return { strokes: write.strokes.length, pixels: n };
+      });
+      assert(inked.strokes === 2, `two drags make two strokes (${inked.strokes})`);
+      assert(inked.pixels > 500, `the canvas actually holds ink (${inked.pixels} px)`);
+      await page.click("#write-undo");
+      assert(await page.evaluate(() => write.strokes.length) === 1, "한 획 removes the last stroke");
+      await page.click("#write-clear");
+      assert(await page.evaluate(() => write.strokes.length) === 0, "지우기 empties the pad");
+
+      // 확인 reveals the glyph and turns the guide on to compare against.
+      await page.click("#write-check");
+      await page.waitForSelector("#write-answer:not([hidden])");
+      const after = await page.evaluate(() => ({
+        shown: document.getElementById("write-answer-char").textContent,
+        traced: document.getElementById("write-guide").classList.contains("traced"),
+        checkHidden: document.getElementById("write-check").hidden,
+      }));
+      assert(after.shown === card.char, `확인 shows the character (${after.shown} vs ${card.char})`);
+      assert(after.traced, "확인 turns the guide on so you can compare your strokes against it");
+      assert(after.checkHidden, "확인 does not stay tappable once the answer is out");
+
+      // Nothing is scored or scheduled — the same call the 가리기 deck makes.
+      // The review KEY does appear, because buildWritePool reads the schedule to
+      // order the round and loadReview writes its empty skeleton on first read
+      // (that write is what guards the legacy migration). What must stay at zero
+      // is scheduled ENTRIES, which is what a stray recordAnswerOutcome would add.
+      const wrote = await page.evaluate(() => {
+        const r = JSON.parse(localStorage.getItem("jlpt_review_n4") || "null");
+        return {
+          entries: Object.values((r && r.types) || {}).reduce((a, t) => a + Object.keys(t).length, 0),
+          results: localStorage.getItem("jlpt_quiz_results_n4"),
+        };
+      });
+      assert(wrote.entries === 0, `쓰기 연습 schedules nothing (${wrote.entries} entries written)`);
+      assert(!wrote.results, `쓰기 연습 records no score (got ${wrote.results})`);
+      await page.close();
+    }
+
+    // --- The stroke-order animation cleans up after itself ---
+    // It writes inline dash offsets on every path; left behind, the next
+    // character would render half-drawn.
+    {
+      const page = await browser.newPage({ viewport: PHONE });
+      await page.goto(URL, { waitUntil: "networkidle" });
+      await page.click("#start-writing");
+      await page.waitForSelector("#write-prompt");
+      await page.click("#write-order");
+      const mid = await page.evaluate(
+        () => document.getElementById("write-guide").classList.contains("animating")
+      );
+      assert(mid, "획순 puts the guide into its animating state");
+      // Moving on must not wait for the animation to finish.
+      await page.evaluate(() => { write.index = 1; renderWriteCard(); });
+      const clean = await page.evaluate(() => ({
+        animating: document.getElementById("write-guide").classList.contains("animating"),
+        leftovers: [...document.querySelectorAll("#write-guide .write-stroke")].filter(
+          (p) => p.style.strokeDasharray || p.style.strokeDashoffset
+        ).length,
+        pending: write.anim,
+      }));
+      assert(clean.leftovers === 0, `no half-drawn strokes carry over (${clean.leftovers})`);
+      assert(clean.pending === null, "the pending animation timer is cancelled on the next card");
+      await page.close();
+    }
+
+    // --- Due kanji are written first ---
+    // The practice has no schedule of its own, but it reads the 한자 one as a
+    // source: the characters you keep missing are the ones you draw.
+    {
+      const page = await browser.newPage({ viewport: PHONE });
+      await page.goto(URL, { waitUntil: "networkidle" });
+      const lead = await page.evaluate(async () => {
+        await Promise.all([buildXrefIndex(), buildStrokeData()]);
+        // Schedule one word due today, and pick one whose characters all have strokes.
+        const target = [..._wordIndex.values()].find(
+          (w) => /^[一-鿿]{2}$/u.test(w.word) && [...w.word].every((c) => _strokeData[c])
+        );
+        recordAnswerOutcome("kanji", target.word, false);
+        const pool = buildWritePool(8);
+        return { word: target.word, first: pool[0].word.word, firstChar: pool[0].char };
+      });
+      assert(
+        lead.first === lead.word,
+        `the card that is due leads the round (expected ${lead.word}, got ${lead.first})`
+      );
+      await page.close();
+    }
+
     // --- exam.json keeps the shape every もんだい renderer assumes ---
     // Ten formats live in one file because the exam page is their only consumer;
     // the per-shape invariants are checked here instead of per file.

@@ -79,6 +79,10 @@ exam.json       { context[], synonym[], usage[], order[], cloze[], longread[],
                   the ten 기출 formats no quiz type expresses. ONE file, not ten —
                   the 모의고사 page is their only consumer and they are not quiz
                   types (no QUIZ_KEY_FIELD, no review schedule of their own)
+data/strokes.json  { license, source, viewBox, strokes: { "<char>": ["<svg path d>", ..] } }
+                  NOT under data/<level>/ — stroke order is a fact about the
+                  character, not about N4, so N3 will reuse the same file.
+                  KanjiVG data under CC BY-SA 3.0; the header travels with it
 radical.json    { "<부수>": { name, sense, base?, chars: [..] } }  hand-verified 부수 groups;
                                                           feeds the post-answer note and the tab
 kanjichar.json  { "<char>": { meaning, note } }         one row per radical.json character:
@@ -236,6 +240,20 @@ At a round of 5 the review cap takes 2 and 3 slots are fresh, which puts the eig
 - Both buttons live in `#quiz-replays`, a flex row. Its `display` sits behind `:not([hidden])` for the same reason `.quiz-replay` did — a bare `display` beats the browser's `[hidden]{display:none}` and the row would show on every quiz type (the original `.quiz-replay` bug). Verified at 390×844: the two buttons fit on one line and 다음 stays reachable.
 
 Invariants `listening.json` must keep (checked when the file is edited, and partly by `test/smoke.js`, which asserts the rendered four are exactly one entry's `meaning` + `choices`): exactly 3 distractors per entry, the answer not among them, no duplicate distractors within an entry, no distractor equal to *another* entry's meaning (that would make two questions share a correct-looking option), and no duplicate `script`/`meaning` across entries — `script` is the wrong-answer queue's key.
+
+## 한자 쓰기 연습 (the ✍️ button on the 쪽지시험 tab)
+
+Asked for on 2026-10-23 ("한자를 내가 쓰는 그런것도 가능할까?"). **Say the honest thing first, and the screen does: JLPT is multiple choice, so handwriting is never tested.** This is here because writing a character is a different and stronger kind of recall than picking it off a list, and "반복해서 봐도 잘 안 외워진다" has come up twice. Don't let it drift into claiming exam value it doesn't have.
+
+- **Practice, not a quiz: no score and no schedule.** The 한자 기초 tab's 가리기 deck set that precedent and the reasoning carries: a second record of the same characters would be two states to keep honest, and a *self-graded* one is the least trustworthy of them. A test asserts zero scheduled entries and no quiz result after a full card. **The review key does get written** — `buildWritePool` reads the schedule, and `loadReview` writes its empty skeleton on first read (that write is what guards the legacy migration), so the test counts entries rather than checking the key is absent.
+- **It reads the 한자 schedule as a source, and the order of that read is load-bearing.** Due words are walked **first**, not sorted afterwards. A character is claimed by whichever word reaches it first, so sorting at the end was too late: a non-due word holding 社 earlier in the shuffle took 社, and the due 会社 contributed nothing — the one character the round exists to drill could drop out entirely. Caught by the test that asserts the due card leads, which failed on about half of its runs before the fix.
+- **Recall first: 밑글씨 starts OFF.** Tracing a glyph already on the pad is copying. 획순 (animated stroke order) and 밑글씨 are one tap away for a character you genuinely cannot picture, and 확인 turns the guide on so you can compare what you drew against it. A test checks the computed `stroke` is actually transparent, not merely unflagged.
+- **The prompt hides the character.** A word the character sits in, with the character itself replaced by `〇`, plus reading and meaning — `〇用 / りよう · 이용`. Uniform across all 321 characters (the 훈음 only exists for the 105 in `kanjichar.json`) and it drills the 표기 direction rather than the glyph in isolation. **`〇` is U+3007, not `◯` U+25EF** — the latter renders far larger than the character beside it.
+- **No handwriting recognition, and that is deliberate.** 확인 shows the glyph and turns the guide on; you compare. A recognizer small enough for a no-build static site would be wrong often enough that a false "맞았습니다" would teach the wrong shape — worse than honest self-comparison.
+- **`data/strokes.json` is KanjiVG under CC BY-SA 3.0** (Ulrich Apel), extracted to stroke paths in order: 321 characters, 2,790 strokes, 240KB raw and ~96KB gzipped, fetched only when the practice opens. It sits at `data/` rather than `data/<level>/` because stroke order is a fact about the character, not about N4. The `license`/`source` header is **asserted by a test** — dropping it is the one way redistributing this becomes a problem. Attribution is also in `README.md`.
+- **Pointer events, not touch + mouse.** One code path for finger, stylus and trackpad, and `setPointerCapture` keeps a stroke alive when the finger slides off the pad mid-stroke. `.write-canvas` needs `touch-action: none` or the first finger stroke scrolls the page instead of drawing. The canvas is scaled by `devicePixelRatio` on every repaint, so lines stay crisp on a phone.
+- **The animation cleans up after itself.** It writes inline `stroke-dasharray`/`stroke-dashoffset` on every path and holds a `setTimeout` chain; `writeStopAnimation` clears both, and `renderWriteCard` calls it — otherwise moving on mid-animation leaves the next character half-drawn. A test moves to the next card mid-animation and asserts no leftovers and no pending timer.
+- **It lives inside the 쪽지시험 tab, as a full-width button under the eight quiz launchers.** Three tabs is the most that fits one phone row (a test pins that), and nine buttons in a two-column grid would orphan one. Full width also reads as "a different kind of thing", which it is.
 
 ## N4 모의고사 (the 모의고사 tab)
 
