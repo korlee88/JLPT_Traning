@@ -318,9 +318,13 @@ main {
 .exam-review-note { color: var(--muted); font-size: 0.85rem; line-height: 1.7; margin: 0; white-space: pre-line; }
 
 /* ---------- 한자 쓰기 연습 ---------- */
-.write-btn { width: 100%; margin-top: 10px; }
+.write-btn { width: 100%; margin-top: 8px; }
+/* The 훈음 is the prompt now, so it is Korean and sized to read, not to show
+   strokes — the glyph is the thing you are being asked to produce. */
+.write-note-line { font-size: 0.85rem; line-height: 1.7; text-align: center; color: var(--muted); margin: 0 0 4px; }
+#write-advance { width: 100%; }
 .write-note { color: var(--muted); font-size: 0.78rem; line-height: 1.6; margin: 0 0 10px; }
-.write-prompt { font-size: 2.2rem; text-align: center; margin: 4px 0 2px; line-height: 1.3; }
+.write-prompt { font-size: 1.6rem; font-weight: 700; text-align: center; margin: 4px 0 2px; line-height: 1.4; }
 .write-hint { color: var(--muted); font-size: 0.85rem; text-align: center; margin: 0 0 12px; line-height: 1.6; white-space: pre-line; }
 
 /* The pad is square and the SVG sits exactly under the canvas, so a traced

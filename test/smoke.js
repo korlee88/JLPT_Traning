@@ -1371,40 +1371,60 @@ async function main() {
       assert(chars.size > 300, `the set is the real one, not a sample (${chars.size} characters)`);
     }
 
-    // --- 쓰기 연습 is recall first, and the pad actually takes ink ---
+    // --- 쓰기 연습: copy first, then recall, on the 한자 기초 tab ---
+    // Rebuilt on 2026-10-23 the same day it shipped. The first version drilled
+    // all 321 word-characters with the guide off; the owner could not write one
+    // of them ("한자를 너무 모르니까 하나도 못 쓴다"). It now lives on 한자 기초,
+    // draws the 105 기초 characters, and writes each one twice.
     {
       const page = await browser.newPage({ viewport: PHONE });
       await page.goto(URL, { waitUntil: "networkidle" });
+      // It is not on the 쪽지시험 tab any more, and a leftover launcher there
+      // would be a dead button nobody notices.
+      assert(
+        (await page.$("#tab-quiz #start-writing")) === null,
+        "the launcher is gone from the 쪽지시험 tab"
+      );
+      await page.click('.tab-btn[data-tab="radical"]');
       await page.click("#start-writing");
       await page.waitForSelector("#write-prompt");
 
-      const card = await page.evaluate(() => ({
+      const chars = JSON.parse(fs.readFileSync(path.join(ROOT, "data/n4/kanjichar.json"), "utf8"));
+      const trace = await page.evaluate(() => ({
         size: write.pool.length,
-        trace: write.trace,
-        allHaveStrokes: write.pool.every((c) => _strokeData[c.char] && _strokeData[c.char].length),
-        char: write.pool[0].char,
-        word: write.pool[0].word.word,
+        step: write.step,
+        intro: document.getElementById("radical-intro").hidden,
+        groups: document.getElementById("radical-groups").hidden,
+        progress: document.getElementById("write-progress").textContent,
         prompt: document.getElementById("write-prompt").textContent,
+        note: document.getElementById("write-note-line").textContent,
+        traced: document.getElementById("write-guide").classList.contains("traced"),
+        advance: !document.getElementById("write-advance").hidden,
+        check: !document.getElementById("write-check").hidden,
+        char: write.pool[0].char,
+        allBasic: write.pool.every((c) => c.meaning && c.note),
         guideStrokes: document.querySelectorAll("#write-guide .write-stroke").length,
       }));
-      assert(card.size === 8, `a writing round is eight characters (${card.size})`);
-      assert(card.allHaveStrokes, "every card drawn into the round has stroke data");
-      // The prompt blanks the character you are being asked to write, or the
-      // answer is printed above the pad.
+      assert(trace.size === 8, `a writing round is eight characters (${trace.size})`);
+      assert(trace.intro && trace.groups, "the practice takes over the tab rather than sitting under the list");
       assert(
-        !card.prompt.includes(card.char) && card.prompt.includes("〇"),
-        `the prompt hides the character (${card.char} in "${card.prompt}")`
+        trace.allBasic && chars[trace.char],
+        `the round draws the 기초 characters this tab teaches (${trace.char})`
       );
+      // The prompt is the 훈음, not a blanked word — a beginner needs to be told
+      // what to write, not to work it out from a compound.
       assert(
-        card.guideStrokes === await page.evaluate(() => _strokeData[write.pool[0].char].length),
-        "the guide carries one path per stroke"
+        trace.prompt === chars[trace.char].meaning && trace.note === chars[trace.char].note,
+        `the prompt is the character's 훈음 and composition (got "${trace.prompt}")`
       );
-      // Starts OFF: a glyph already on the pad turns the exercise into copying.
-      assert(card.trace === false, "the 밑글씨 guide starts off, so the first attempt is from memory");
+      assert(/따라 쓰기/.test(trace.progress), `the first pass says it is the copying one (${trace.progress})`);
+      // Copy first: the example has to be ON, or there is nothing to follow.
+      assert(trace.traced && trace.step === "trace", "the example is on the pad for the first pass");
       const visible = await page.evaluate(
         () => getComputedStyle(document.querySelector("#write-guide .write-stroke")).stroke
       );
-      assert(visible === "rgba(0, 0, 0, 0)", `the guide really is invisible, not just unflagged (${visible})`);
+      assert(visible !== "rgba(0, 0, 0, 0)", `the example really is drawn, not just flagged (${visible})`);
+      assert(trace.advance && !trace.check, "the copying pass offers 혼자 써보기, not 확인");
 
       // Draw with the mouse the way a finger would, and check ink landed.
       const box = await page.locator("#write-canvas").boundingBox();
@@ -1425,26 +1445,47 @@ async function main() {
       assert(inked.pixels > 500, `the canvas actually holds ink (${inked.pixels} px)`);
       await page.click("#write-undo");
       assert(await page.evaluate(() => write.strokes.length) === 1, "한 획 removes the last stroke");
-      await page.click("#write-clear");
-      assert(await page.evaluate(() => write.strokes.length) === 0, "지우기 empties the pad");
 
-      // 확인 reveals the glyph and turns the guide on to compare against.
+      // Second pass: same character, blank pad, example gone.
+      await page.click("#write-advance");
+      const recall = await page.evaluate(() => ({
+        char: write.pool[write.index].char,
+        progress: document.getElementById("write-progress").textContent,
+        traced: document.getElementById("write-guide").classList.contains("traced"),
+        strokes: write.strokes.length,
+        advance: !document.getElementById("write-advance").hidden,
+        check: !document.getElementById("write-check").hidden,
+        stroke: getComputedStyle(document.querySelector("#write-guide .write-stroke")).stroke,
+      }));
+      assert(recall.char === trace.char, `the second pass is the same character (${recall.char})`);
+      assert(/혼자 쓰기/.test(recall.progress), `the second pass says it is the unaided one (${recall.progress})`);
+      assert(!recall.traced && recall.stroke === "rgba(0, 0, 0, 0)", "the example is gone for the second pass");
+      assert(recall.strokes === 0, `the pad is cleared between passes (${recall.strokes} strokes left)`);
+      assert(!recall.advance && recall.check, "the second pass offers 확인");
+
+      // 확인 reveals the glyph and brings the example back to compare against.
       await page.click("#write-check");
       await page.waitForSelector("#write-answer:not([hidden])");
       const after = await page.evaluate(() => ({
         shown: document.getElementById("write-answer-char").textContent,
+        meaning: document.getElementById("write-answer-meaning").textContent,
         traced: document.getElementById("write-guide").classList.contains("traced"),
-        checkHidden: document.getElementById("write-check").hidden,
+        next: !document.getElementById("write-next").hidden,
       }));
-      assert(after.shown === card.char, `확인 shows the character (${after.shown} vs ${card.char})`);
-      assert(after.traced, "확인 turns the guide on so you can compare your strokes against it");
-      assert(after.checkHidden, "확인 does not stay tappable once the answer is out");
+      assert(after.shown === trace.char, `확인 shows the character (${after.shown} vs ${trace.char})`);
+      assert(after.traced, "확인 brings the example back so you can compare your strokes against it");
+      assert(after.next, "확인 offers the next character");
+
+      // 다음 글자 starts the next one back at the copying pass.
+      await page.click("#write-next");
+      const second = await page.evaluate(() => ({ index: write.index, step: write.step }));
+      assert(second.index === 1 && second.step === "trace", "the next character starts at 따라 쓰기 again");
 
       // Nothing is scored or scheduled — the same call the 가리기 deck makes.
-      // The review KEY does appear, because buildWritePool reads the schedule to
-      // order the round and loadReview writes its empty skeleton on first read
-      // (that write is what guards the legacy migration). What must stay at zero
-      // is scheduled ENTRIES, which is what a stray recordAnswerOutcome would add.
+      // The review KEY does appear, because buildWritePool reads the schedule and
+      // loadReview writes its empty skeleton on first read (that write is what
+      // guards the legacy migration). What must stay at zero is scheduled
+      // ENTRIES, which is what a stray recordAnswerOutcome would add.
       const wrote = await page.evaluate(() => {
         const r = JSON.parse(localStorage.getItem("jlpt_review_n4") || "null");
         return {
@@ -1454,6 +1495,14 @@ async function main() {
       });
       assert(wrote.entries === 0, `쓰기 연습 schedules nothing (${wrote.entries} entries written)`);
       assert(!wrote.results, `쓰기 연습 records no score (got ${wrote.results})`);
+
+      // 그만두기 puts the tab back rather than leaving a blank screen.
+      await page.click("#write-quit");
+      const back = await page.evaluate(() => ({
+        groups: document.getElementById("radical-groups").hidden,
+        panel: document.getElementById("write-play").hidden,
+      }));
+      assert(!back.groups && back.panel, "그만두기 restores the 한자 기초 list");
       await page.close();
     }
 
@@ -1463,6 +1512,7 @@ async function main() {
     {
       const page = await browser.newPage({ viewport: PHONE });
       await page.goto(URL, { waitUntil: "networkidle" });
+      await page.click('.tab-btn[data-tab="radical"]');
       await page.click("#start-writing");
       await page.waitForSelector("#write-prompt");
       await page.click("#write-order");
@@ -1471,9 +1521,8 @@ async function main() {
       );
       assert(mid, "획순 puts the guide into its animating state");
       // Moving on must not wait for the animation to finish.
-      await page.evaluate(() => { write.index = 1; renderWriteCard(); });
+      await page.evaluate(() => { write.index = 1; write.step = "trace"; renderWriteCard(); });
       const clean = await page.evaluate(() => ({
-        animating: document.getElementById("write-guide").classList.contains("animating"),
         leftovers: [...document.querySelectorAll("#write-guide .write-stroke")].filter(
           (p) => p.style.strokeDasharray || p.style.strokeDashoffset
         ).length,
@@ -1484,28 +1533,31 @@ async function main() {
       await page.close();
     }
 
-    // --- Due kanji are written first ---
+    // --- A character sitting in a due word is written first ---
     // The practice has no schedule of its own, but it reads the 한자 one as a
-    // source: the characters you keep missing are the ones you draw.
+    // source: the characters you keep missing are the ones you draw. The unit is
+    // the character, so unlike the first version a due one cannot be claimed by
+    // some other word and dropped.
     {
       const page = await browser.newPage({ viewport: PHONE });
       await page.goto(URL, { waitUntil: "networkidle" });
       const lead = await page.evaluate(async () => {
-        await Promise.all([buildXrefIndex(), buildStrokeData()]);
-        // Schedule one word due today, and pick one whose characters all have strokes.
+        await Promise.all([buildXrefIndex(), buildStrokeData(), buildKanjiChars()]);
+        // A word whose characters are all in the 기초 set, so the round must pick them.
         const target = [..._wordIndex.values()].find(
-          (w) => /^[一-鿿]{2}$/u.test(w.word) && [...w.word].every((c) => _strokeData[c])
+          (w) => /^[一-鿿]{2}$/u.test(w.word) && [...w.word].every((c) => _kanjiChars[c] && _strokeData[c])
         );
         recordAnswerOutcome("kanji", target.word, false);
-        const pool = buildWritePool(8);
-        return { word: target.word, first: pool[0].word.word, firstChar: pool[0].char };
+        const pool = buildWritePool(8).map((c) => c.char);
+        return { word: target.word, pool: pool.join(""), lead: pool.slice(0, 2).join("") };
       });
       assert(
-        lead.first === lead.word,
-        `the card that is due leads the round (expected ${lead.word}, got ${lead.first})`
+        [...lead.word].every((c) => lead.lead.includes(c)),
+        `both characters of the due word lead the round (${lead.word} vs "${lead.lead}")`
       );
       await page.close();
     }
+
 
     // --- exam.json keeps the shape every もんだい renderer assumes ---
     // Ten formats live in one file because the exam page is their only consumer;
