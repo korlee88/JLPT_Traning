@@ -1338,6 +1338,274 @@ function nextQuestion() {
   }
 }
 
+// ---------- 한자 쓰기 연습 ----------
+// Asked for on 2026-10-23 ("한자를 내가 쓰는 그런것도 가능할까?"). **JLPT is
+// multiple choice — handwriting is never tested**, and the screen says so. It is
+// here because writing a character is a different and stronger kind of recall
+// than picking it off a list, and "반복해서 봐도 잘 안 외워진다" has come up twice.
+//
+// **Practice, not a quiz: no score and no schedule.** The 한자 기초 tab's 가리기
+// deck set that precedent for the same reason — a second record of the same
+// characters would be two states to keep honest, and a self-graded one is the
+// least trustworthy of them. What it *does* reuse is the kanji review queue as a
+// SOURCE: what is due comes first, so the characters you keep missing are the
+// ones you write. Nothing is written back.
+const WRITE_ROUND = 8;
+
+const write = {
+  pool: [], index: 0, strokes: [], drawing: null, trace: true, checked: false, anim: null,
+};
+
+let _strokeData = null; // char -> [SVG path d], from KanjiVG (CC BY-SA 3.0)
+async function buildStrokeData() {
+  if (_strokeData) return _strokeData;
+  const file = await fetch("data/strokes.json").then((r) => r.json());
+  _strokeData = file.strokes;
+  return _strokeData;
+}
+
+// A character is only drillable if we have its stroke order; without the guide
+// this would be "draw from memory and hope", which teaches the wrong shape.
+// Prompts come from a word the character sits in, with the character itself
+// replaced by 〇 — uniform across all 321, and it drills the 표기 direction
+// rather than just the glyph in isolation.
+function buildWritePool(size) {
+  const words = [..._wordIndex.values()];
+  const schedule = loadReview().types.kanji || {};
+  const due = new Set(dueKeys(schedule));
+  // Due words are walked FIRST, not sorted afterwards. A character is claimed by
+  // whichever word reaches it first, so sorting at the end was too late: if a
+  // non-due word containing 社 came up earlier in the shuffle, it took 社 and the
+  // due 会社 contributed nothing — the one character the round exists to drill
+  // could drop out entirely. Each half is shuffled, so the order is still fresh.
+  const byDue = (want) => shuffle(words).filter((w) => due.has(w.word) === want);
+  const cards = [];
+  const seen = new Set();
+  for (const w of [...byDue(true), ...byDue(false)]) {
+    for (const ch of new Set(w.word.match(CJK) || [])) {
+      if (seen.has(ch) || !_strokeData[ch]) continue;
+      seen.add(ch);
+      cards.push({ char: ch, word: w, due: due.has(w.word) });
+    }
+  }
+  return cards.slice(0, size);
+}
+
+function writeCanvasSetup() {
+  const canvas = document.getElementById("write-canvas");
+  const rect = canvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.round(rect.width * dpr);
+  canvas.height = Math.round(rect.height * dpr);
+  const ctx = canvas.getContext("2d");
+  ctx.scale(dpr, dpr);
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.lineWidth = 6;
+  ctx.strokeStyle = getComputedStyle(document.body).getPropertyValue("color") || "#000";
+  return ctx;
+}
+
+function writeRepaint() {
+  const canvas = document.getElementById("write-canvas");
+  const ctx = writeCanvasSetup();
+  const rect = canvas.getBoundingClientRect();
+  ctx.clearRect(0, 0, rect.width, rect.height);
+  for (const stroke of write.strokes) {
+    if (stroke.length < 2) {
+      // A tap with no movement is still a dot of ink, not nothing.
+      ctx.beginPath();
+      ctx.arc(stroke[0].x, stroke[0].y, ctx.lineWidth / 2, 0, Math.PI * 2);
+      ctx.fillStyle = ctx.strokeStyle;
+      ctx.fill();
+      continue;
+    }
+    ctx.beginPath();
+    ctx.moveTo(stroke[0].x, stroke[0].y);
+    for (const p of stroke.slice(1)) ctx.lineTo(p.x, p.y);
+    ctx.stroke();
+  }
+  document.getElementById("write-undo").disabled = write.strokes.length === 0;
+}
+
+// The reference glyph, as SVG under the canvas. Two jobs: the faint 밑글씨 you
+// trace over, and the 획순 animation. Both are the same paths, so the stroke
+// you watch being drawn is the stroke you then trace.
+function writeRenderGuide() {
+  const svg = document.getElementById("write-guide");
+  const paths = write.pool[write.index] ? _strokeData[write.pool[write.index].char] : [];
+  svg.innerHTML = "";
+  const ns = "http://www.w3.org/2000/svg";
+  // Centre lines, the way a 원고지 square has them.
+  for (const [x1, y1, x2, y2] of [[54.5, 0, 54.5, 109], [0, 54.5, 109, 54.5]]) {
+    const l = document.createElementNS(ns, "line");
+    l.setAttribute("x1", x1); l.setAttribute("y1", y1);
+    l.setAttribute("x2", x2); l.setAttribute("y2", y2);
+    l.setAttribute("class", "write-grid");
+    svg.append(l);
+  }
+  paths.forEach((d) => {
+    const path = document.createElementNS(ns, "path");
+    path.setAttribute("d", d);
+    path.setAttribute("class", "write-stroke");
+    svg.append(path);
+  });
+  svg.classList.toggle("traced", write.trace);
+}
+
+function writeStopAnimation() {
+  if (write.anim) clearTimeout(write.anim);
+  write.anim = null;
+  document.querySelectorAll("#write-guide .write-stroke").forEach((p) => {
+    p.classList.remove("drawing");
+    p.style.removeProperty("stroke-dasharray");
+    p.style.removeProperty("stroke-dashoffset");
+    p.style.removeProperty("transition");
+  });
+}
+
+function writePlayOrder() {
+  writeStopAnimation();
+  const paths = [...document.querySelectorAll("#write-guide .write-stroke")];
+  const svg = document.getElementById("write-guide");
+  svg.classList.add("animating");
+  paths.forEach((p) => {
+    const len = p.getTotalLength();
+    p.style.strokeDasharray = `${len}`;
+    p.style.strokeDashoffset = `${len}`;
+  });
+  let i = 0;
+  const step = () => {
+    if (i >= paths.length) {
+      write.anim = setTimeout(() => {
+        svg.classList.remove("animating");
+        writeStopAnimation();
+      }, 700);
+      return;
+    }
+    const p = paths[i++];
+    const len = p.getTotalLength();
+    const ms = Math.max(220, Math.min(700, len * 9));
+    p.classList.add("drawing");
+    p.style.transition = `stroke-dashoffset ${ms}ms linear`;
+    p.style.strokeDashoffset = "0";
+    write.anim = setTimeout(step, ms + 90);
+  };
+  step();
+}
+
+function renderWriteCard() {
+  const card = write.pool[write.index];
+  write.strokes = [];
+  write.checked = false;
+  writeStopAnimation();
+  document.getElementById("write-progress").textContent = `${write.index + 1} / ${write.pool.length}`;
+  const blanked = card.word.word.split(card.char).join("〇");
+  document.getElementById("write-prompt").textContent = blanked;
+  const reading = card.word.reading !== card.word.word ? `${card.word.reading} · ` : "";
+  const n = _strokeData[card.char].length;
+  document.getElementById("write-hint").textContent =
+    `${reading}${card.word.meaning}\n〇에 들어갈 글자 · ${n}획`;
+  document.getElementById("write-answer").hidden = true;
+  document.getElementById("write-next").hidden = true;
+  document.getElementById("write-check").hidden = false;
+  document.getElementById("write-trace").classList.toggle("on", write.trace);
+  writeRenderGuide();
+  writeRepaint();
+}
+
+function writeCheck() {
+  const card = write.pool[write.index];
+  write.checked = true;
+  writeStopAnimation();
+  // Showing the glyph *is* the grading — you compare it against what you drew.
+  // There is no automatic recognition here, and claiming one would be worse than
+  // honest self-comparison: a wrong "맞았습니다" teaches the wrong shape.
+  document.getElementById("write-answer-char").textContent = card.char;
+  const own = _kanjiChars && _kanjiChars[card.char];
+  document.getElementById("write-answer-meaning").textContent = own
+    ? `${own.meaning} — ${card.word.word}(${card.word.reading}, ${card.word.meaning})`
+    : `${card.word.word}(${card.word.reading}, ${card.word.meaning})`;
+  document.getElementById("write-answer").hidden = false;
+  document.getElementById("write-check").hidden = true;
+  document.getElementById("write-next").hidden = write.index === write.pool.length - 1;
+  document.getElementById("write-guide").classList.add("traced");
+}
+
+let _kanjiChars = null; // the authored 훈음, when the character has one
+async function startWriting() {
+  await Promise.all([buildXrefIndex(), buildStrokeData()]);
+  if (!_kanjiChars) {
+    _kanjiChars = await fetch(`data/${CURRENT_LEVEL}/kanjichar.json`).then((r) => r.json());
+  }
+  write.pool = buildWritePool(WRITE_ROUND);
+  write.index = 0;
+  // Starts OFF: tracing a glyph already on the pad is copying, not recall, and
+  // recall is the only reason to write it by hand at all. 획순 and 밑글씨 are one
+  // tap away for a character you genuinely cannot picture, and 확인 turns the
+  // guide on so you can compare what you drew against it.
+  write.trace = false;
+  document.getElementById("quiz-start").hidden = true;
+  document.getElementById("write-play").hidden = false;
+  renderWriteCard();
+}
+
+function setupWriting() {
+  const canvas = document.getElementById("write-canvas");
+  const at = (e) => {
+    const r = canvas.getBoundingClientRect();
+    return { x: e.clientX - r.left, y: e.clientY - r.top };
+  };
+  // Pointer events rather than touch+mouse: one code path for finger, stylus and
+  // trackpad, and setPointerCapture keeps a stroke alive when the finger slides
+  // off the pad mid-stroke.
+  canvas.addEventListener("pointerdown", (e) => {
+    if (write.checked) return;
+    e.preventDefault();
+    canvas.setPointerCapture(e.pointerId);
+    write.drawing = [at(e)];
+    write.strokes.push(write.drawing);
+    writeRepaint();
+  });
+  canvas.addEventListener("pointermove", (e) => {
+    if (!write.drawing) return;
+    e.preventDefault();
+    write.drawing.push(at(e));
+    writeRepaint();
+  });
+  const end = () => { write.drawing = null; };
+  canvas.addEventListener("pointerup", end);
+  canvas.addEventListener("pointercancel", end);
+  canvas.addEventListener("pointerleave", end);
+
+  document.getElementById("write-undo").addEventListener("click", () => {
+    write.strokes.pop();
+    writeRepaint();
+  });
+  document.getElementById("write-clear").addEventListener("click", () => {
+    write.strokes = [];
+    writeRepaint();
+  });
+  document.getElementById("write-order").addEventListener("click", writePlayOrder);
+  document.getElementById("write-trace").addEventListener("click", (e) => {
+    write.trace = !write.trace;
+    document.getElementById("write-guide").classList.toggle("traced", write.trace);
+    e.currentTarget.classList.toggle("on", write.trace);
+  });
+  document.getElementById("write-check").addEventListener("click", writeCheck);
+  document.getElementById("write-next").addEventListener("click", () => {
+    write.index += 1;
+    renderWriteCard();
+  });
+  document.getElementById("write-quit").addEventListener("click", () => {
+    writeStopAnimation();
+    document.getElementById("write-play").hidden = true;
+    document.getElementById("quiz-start").hidden = false;
+    renderWrongNote();
+  });
+  document.getElementById("start-writing").addEventListener("click", startWriting);
+}
+
 // ---------- N4 모의고사 ----------
 // The real exam, in the real shape: three sittings in the official もんだい
 // order with the official counts, the official 115 minutes split 25/55/35, and
@@ -1973,6 +2241,7 @@ async function init() {
   setupQuiz();
   setupRadicalMask();
   setupExam();
+  setupWriting();
   const res = await fetch(`data/${CURRENT_LEVEL}/plan.json`);
   const plan = await res.json();
   renderTopbar(plan);

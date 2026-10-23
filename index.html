@@ -41,6 +41,11 @@
             <button id="start-reading" class="btn quiz-type-btn" data-type="reading">독해 쪽지시험</button>
             <button id="start-listening" class="btn quiz-type-btn" data-type="listening">청해 쪽지시험</button>
           </div>
+          <!-- Practice, not a quiz: no score and no schedule, like the 한자 기초
+               tab's 가리기 deck. Full width because it is a different kind of
+               thing from the eight buttons above it, and because nine buttons in
+               a two-column grid would leave one orphaned. -->
+          <button id="start-writing" class="btn write-btn">✍️ 한자 쓰기 연습</button>
           <!-- The review schedule, visible. Ids keep the "wrong-" prefix from
                when this was a wrong/not-wrong queue; renaming them would churn
                the CSS and tests for nothing. -->
@@ -67,6 +72,31 @@
           <button id="quiz-say" class="btn" hidden>🔊 발음 듣기</button>
           <p id="quiz-note" class="quiz-note" hidden lang="ja"></p>
           <button id="quiz-next" class="btn" hidden>다음</button>
+        </div>
+        <!-- 쓰기 연습. Its own screen inside the 쪽지시험 tab: the tab row is
+             already at the three buttons that fit one phone line. -->
+        <div id="write-play" hidden>
+          <p class="write-note">JLPT는 객관식이라 손글씨는 시험에 나오지 않습니다. 외우는 데 도움이 되는 연습입니다.</p>
+          <p id="write-progress" class="quiz-progress"></p>
+          <p id="write-prompt" class="write-prompt" lang="ja"></p>
+          <p id="write-hint" class="write-hint"></p>
+          <div class="write-pad">
+            <svg id="write-guide" class="write-guide" viewBox="0 0 109 109" aria-hidden="true"></svg>
+            <canvas id="write-canvas" class="write-canvas"></canvas>
+          </div>
+          <div class="write-tools">
+            <button id="write-undo" class="btn secondary">↩ 한 획</button>
+            <button id="write-clear" class="btn secondary">지우기</button>
+            <button id="write-order" class="btn secondary">▶ 획순</button>
+            <button id="write-trace" class="btn secondary">밑글씨</button>
+          </div>
+          <button id="write-check" class="btn">확인</button>
+          <div id="write-answer" hidden>
+            <p id="write-answer-char" class="write-answer-char" lang="ja"></p>
+            <p id="write-answer-meaning" class="write-answer-meaning"></p>
+          </div>
+          <button id="write-next" class="btn" hidden>다음</button>
+          <button id="write-quit" class="btn secondary write-quit">그만두기</button>
         </div>
         <div id="quiz-result" hidden>
           <p id="quiz-score"></p>

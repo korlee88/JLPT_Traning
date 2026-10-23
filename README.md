@@ -34,3 +34,9 @@ npm test
 ```
 
 `test/smoke.js`가 로컬 서버를 띄우고 헤드리스 브라우저로 오늘 체크/스트릭/전체 계획/쪽지시험 흐름과 날짜 경계 로직을 검증합니다. UI나 데이터를 바꾼 뒤에는 커밋 전에 실행하세요.
+
+## 서드파티 데이터
+
+`data/strokes.json`의 획순 데이터는 [KanjiVG](https://kanjivg.tagaini.net/)(Ulrich Apel)에서 가져왔고, **Creative Commons Attribution-Share Alike 3.0**으로 배포됩니다. 원본 SVG에서 글자별 획 경로만 순서대로 추출했으며, 같은 라이선스로 재배포합니다. 파일 안의 `license`/`source` 항목을 지우지 마세요 — `test/smoke.js`가 확인합니다.
+
+나머지 `data/**`는 이 저장소에서 직접 작성한 것입니다.

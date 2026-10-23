@@ -316,3 +316,35 @@ main {
 .exam-transcript { border: 1px dashed var(--border); border-radius: 10px; padding: 10px; font-size: 0.9rem; line-height: 1.8; white-space: pre-line; margin: 0 0 8px; }
 .exam-review-answer { font-size: 0.95rem; font-weight: 700; margin: 0 0 8px; }
 .exam-review-note { color: var(--muted); font-size: 0.85rem; line-height: 1.7; margin: 0; white-space: pre-line; }
+
+/* ---------- 한자 쓰기 연습 ---------- */
+.write-btn { width: 100%; margin-top: 10px; }
+.write-note { color: var(--muted); font-size: 0.78rem; line-height: 1.6; margin: 0 0 10px; }
+.write-prompt { font-size: 2.2rem; text-align: center; margin: 4px 0 2px; line-height: 1.3; }
+.write-hint { color: var(--muted); font-size: 0.85rem; text-align: center; margin: 0 0 12px; line-height: 1.6; white-space: pre-line; }
+
+/* The pad is square and the SVG sits exactly under the canvas, so a traced
+   stroke lands where the guide drew it. */
+.write-pad {
+  position: relative; width: 100%; max-width: 300px; margin: 0 auto 12px;
+  aspect-ratio: 1 / 1; border: 1px solid var(--border); border-radius: 12px;
+  background: var(--card); overflow: hidden;
+}
+.write-guide, .write-canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+/* touch-action none, or the first finger stroke scrolls the page instead. */
+.write-canvas { touch-action: none; cursor: crosshair; }
+.write-grid { stroke: var(--border); stroke-width: 1; stroke-dasharray: 4 4; }
+/* Hidden by default: the guide only shows as 밑글씨 or while the order plays,
+   or there would be nothing to recall. */
+.write-stroke { fill: none; stroke: transparent; stroke-width: 4.5; stroke-linecap: round; stroke-linejoin: round; }
+.write-guide.traced .write-stroke { stroke: var(--border); }
+.write-guide.animating .write-stroke { stroke: transparent; }
+.write-guide.animating .write-stroke.drawing { stroke: var(--accent); }
+
+.write-tools { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 10px; }
+.write-tools .btn { padding: 9px 4px; font-size: 0.82rem; }
+.write-tools .btn.on { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+#write-check, #write-next { width: 100%; }
+.write-quit { width: 100%; margin-top: 8px; }
+.write-answer-char { font-size: 3.2rem; text-align: center; margin: 12px 0 4px; line-height: 1.1; }
+.write-answer-meaning { color: var(--muted); font-size: 0.9rem; text-align: center; margin: 0 0 12px; line-height: 1.6; }
