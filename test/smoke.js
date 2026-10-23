@@ -1371,11 +1371,12 @@ async function main() {
       assert(chars.size > 300, `the set is the real one, not a sample (${chars.size} characters)`);
     }
 
-    // --- 쓰기 연습: copy first, then recall, on the 한자 기초 tab ---
-    // Rebuilt on 2026-10-23 the same day it shipped. The first version drilled
-    // all 321 word-characters with the guide off; the owner could not write one
-    // of them ("한자를 너무 모르니까 하나도 못 쓴다"). It now lives on 한자 기초,
-    // draws the 105 기초 characters, and writes each one twice.
+    // --- 쓰기 연습: watch, copy, then recall, on the 한자 기초 tab ---
+    // Rebuilt twice on 2026-10-23. v1 drilled all 321 word-characters with the
+    // guide off and the owner could not write one ("한자를 너무 모르니까 하나도
+    // 못 쓴다"); v2 moved it to 한자 기초 and added the copying pass; v3 put the
+    // stroke-order playback in front of it ("획순 먼저 보여주고 혼자 따라쓰고
+    // 블라인드로 써보는 순서로 하자"). Watch → copy → recall.
     {
       const page = await browser.newPage({ viewport: PHONE });
       await page.goto(URL, { waitUntil: "networkidle" });
@@ -1390,44 +1391,84 @@ async function main() {
       await page.waitForSelector("#write-prompt");
 
       const chars = JSON.parse(fs.readFileSync(path.join(ROOT, "data/n4/kanjichar.json"), "utf8"));
-      const trace = await page.evaluate(() => ({
+      const snap = () =>
+        page.evaluate(() => ({
+          step: write.step,
+          char: write.pool[write.index].char,
+          progress: document.getElementById("write-progress").textContent,
+          hint: document.getElementById("write-hint").textContent,
+          traced: document.getElementById("write-guide").classList.contains("traced"),
+          animating: document.getElementById("write-guide").classList.contains("animating"),
+          watching: document.getElementById("write-tools").classList.contains("watching"),
+          advance: document.getElementById("write-advance").hidden
+            ? null
+            : document.getElementById("write-advance").textContent,
+          check: !document.getElementById("write-check").hidden,
+          strokes: write.strokes.length,
+          stroke: getComputedStyle(document.querySelector("#write-guide .write-stroke")).stroke,
+        }));
+
+      // --- pass 1: 획순 보기 ---
+      const watch = await snap();
+      const setup = await page.evaluate(() => ({
         size: write.pool.length,
-        step: write.step,
         intro: document.getElementById("radical-intro").hidden,
         groups: document.getElementById("radical-groups").hidden,
-        progress: document.getElementById("write-progress").textContent,
         prompt: document.getElementById("write-prompt").textContent,
         note: document.getElementById("write-note-line").textContent,
-        traced: document.getElementById("write-guide").classList.contains("traced"),
-        advance: !document.getElementById("write-advance").hidden,
-        check: !document.getElementById("write-check").hidden,
-        char: write.pool[0].char,
         allBasic: write.pool.every((c) => c.meaning && c.note),
         guideStrokes: document.querySelectorAll("#write-guide .write-stroke").length,
       }));
-      assert(trace.size === 8, `a writing round is eight characters (${trace.size})`);
-      assert(trace.intro && trace.groups, "the practice takes over the tab rather than sitting under the list");
+      assert(setup.size === 8, `a writing round is eight characters (${setup.size})`);
+      assert(setup.intro && setup.groups, "the practice takes over the tab rather than sitting under the list");
       assert(
-        trace.allBasic && chars[trace.char],
-        `the round draws the 기초 characters this tab teaches (${trace.char})`
+        setup.allBasic && chars[watch.char],
+        `the round draws the 기초 characters this tab teaches (${watch.char})`
       );
       // The prompt is the 훈음, not a blanked word — a beginner needs to be told
       // what to write, not to work it out from a compound.
       assert(
-        trace.prompt === chars[trace.char].meaning && trace.note === chars[trace.char].note,
-        `the prompt is the character's 훈음 and composition (got "${trace.prompt}")`
+        setup.prompt === chars[watch.char].meaning && setup.note === chars[watch.char].note,
+        `the prompt is the character's 훈음 and composition (got "${setup.prompt}")`
       );
-      assert(/따라 쓰기/.test(trace.progress), `the first pass says it is the copying one (${trace.progress})`);
-      // Copy first: the example has to be ON, or there is nothing to follow.
-      assert(trace.traced && trace.step === "trace", "the example is on the pad for the first pass");
-      const visible = await page.evaluate(
-        () => getComputedStyle(document.querySelector("#write-guide .write-stroke")).stroke
+      assert(
+        setup.guideStrokes === (await page.evaluate(() => _strokeData[write.pool[write.index].char].length)),
+        "the guide carries one path per stroke"
       );
-      assert(visible !== "rgba(0, 0, 0, 0)", `the example really is drawn, not just flagged (${visible})`);
-      assert(trace.advance && !trace.check, "the copying pass offers 혼자 써보기, not 확인");
+      assert(watch.step === "watch", `the round opens on the stroke-order pass (${watch.step})`);
+      assert(/획순 보기/.test(watch.progress), `the first pass names itself (${watch.progress})`);
+      // The whole point of this pass is the order, so it plays itself.
+      assert(watch.animating, "the stroke order plays without being asked");
+      // Nothing to undo, clear or toggle while watching — the row collapses.
+      assert(watch.watching, "the tool row collapses to the replay button while watching");
+      assert(watch.advance === "따라 써보기 ▸", `the watch pass leads to the copying one (${watch.advance})`);
+      assert(!watch.check, "확인 is not offered until the last pass");
 
-      // Draw with the mouse the way a finger would, and check ink landed.
+      // Drawing is refused while watching: this pass is not a writing pass.
       const box = await page.locator("#write-canvas").boundingBox();
+      await page.mouse.move(box.x + box.width * 0.3, box.y + box.height * 0.3);
+      await page.mouse.down();
+      await page.mouse.move(box.x + box.width * 0.7, box.y + box.height * 0.5, { steps: 8 });
+      await page.mouse.up();
+      assert(
+        (await page.evaluate(() => write.strokes.length)) === 0,
+        "the pad takes no ink during the stroke-order pass"
+      );
+
+      // --- pass 2: 따라 쓰기 ---
+      await page.click("#write-advance");
+      const trace = await snap();
+      assert(trace.char === watch.char, `the copying pass is the same character (${trace.char})`);
+      assert(/따라 쓰기/.test(trace.progress), `the second pass names itself (${trace.progress})`);
+      assert(!trace.watching, "the full tool row is back once you are writing");
+      assert(trace.traced, "the example is on the pad for the copying pass");
+      assert(
+        trace.stroke !== "rgba(0, 0, 0, 0)",
+        `the example really is drawn, not just flagged (${trace.stroke})`
+      );
+      assert(trace.advance === "혼자 써보기 ▸", `the copying pass leads to the blind one (${trace.advance})`);
+      assert(!trace.check, "확인 is still not offered");
+
       for (const [x1, y1, x2, y2] of [[0.3, 0.3, 0.7, 0.4], [0.5, 0.2, 0.5, 0.8]]) {
         await page.mouse.move(box.x + box.width * x1, box.y + box.height * y1);
         await page.mouse.down();
@@ -1444,42 +1485,36 @@ async function main() {
       assert(inked.strokes === 2, `two drags make two strokes (${inked.strokes})`);
       assert(inked.pixels > 500, `the canvas actually holds ink (${inked.pixels} px)`);
       await page.click("#write-undo");
-      assert(await page.evaluate(() => write.strokes.length) === 1, "한 획 removes the last stroke");
+      assert((await page.evaluate(() => write.strokes.length)) === 1, "한 획 removes the last stroke");
 
-      // Second pass: same character, blank pad, example gone.
+      // --- pass 3: 혼자 쓰기 ---
       await page.click("#write-advance");
-      const recall = await page.evaluate(() => ({
-        char: write.pool[write.index].char,
-        progress: document.getElementById("write-progress").textContent,
-        traced: document.getElementById("write-guide").classList.contains("traced"),
-        strokes: write.strokes.length,
-        advance: !document.getElementById("write-advance").hidden,
-        check: !document.getElementById("write-check").hidden,
-        stroke: getComputedStyle(document.querySelector("#write-guide .write-stroke")).stroke,
-      }));
-      assert(recall.char === trace.char, `the second pass is the same character (${recall.char})`);
-      assert(/혼자 쓰기/.test(recall.progress), `the second pass says it is the unaided one (${recall.progress})`);
-      assert(!recall.traced && recall.stroke === "rgba(0, 0, 0, 0)", "the example is gone for the second pass");
+      const recall = await snap();
+      assert(recall.char === watch.char, `the blind pass is still the same character (${recall.char})`);
+      assert(/혼자 쓰기/.test(recall.progress), `the third pass names itself (${recall.progress})`);
+      assert(
+        !recall.traced && recall.stroke === "rgba(0, 0, 0, 0)",
+        "the example is gone for the blind pass"
+      );
       assert(recall.strokes === 0, `the pad is cleared between passes (${recall.strokes} strokes left)`);
-      assert(!recall.advance && recall.check, "the second pass offers 확인");
+      assert(recall.advance === null && recall.check, "the blind pass offers 확인 and nothing further");
 
       // 확인 reveals the glyph and brings the example back to compare against.
       await page.click("#write-check");
       await page.waitForSelector("#write-answer:not([hidden])");
       const after = await page.evaluate(() => ({
         shown: document.getElementById("write-answer-char").textContent,
-        meaning: document.getElementById("write-answer-meaning").textContent,
         traced: document.getElementById("write-guide").classList.contains("traced"),
         next: !document.getElementById("write-next").hidden,
       }));
-      assert(after.shown === trace.char, `확인 shows the character (${after.shown} vs ${trace.char})`);
+      assert(after.shown === watch.char, `확인 shows the character (${after.shown} vs ${watch.char})`);
       assert(after.traced, "확인 brings the example back so you can compare your strokes against it");
       assert(after.next, "확인 offers the next character");
 
-      // 다음 글자 starts the next one back at the copying pass.
+      // 다음 글자 starts the next one back at the stroke-order pass.
       await page.click("#write-next");
       const second = await page.evaluate(() => ({ index: write.index, step: write.step }));
-      assert(second.index === 1 && second.step === "trace", "the next character starts at 따라 쓰기 again");
+      assert(second.index === 1 && second.step === "watch", "the next character starts at 획순 보기 again");
 
       // Nothing is scored or scheduled — the same call the 가리기 deck makes.
       // The review KEY does appear, because buildWritePool reads the schedule and
@@ -1506,6 +1541,7 @@ async function main() {
       await page.close();
     }
 
+
     // --- The stroke-order animation cleans up after itself ---
     // It writes inline dash offsets on every path; left behind, the next
     // character would render half-drawn.
@@ -1522,14 +1558,26 @@ async function main() {
       assert(mid, "획순 puts the guide into its animating state");
       // Moving on must not wait for the animation to finish.
       await page.evaluate(() => { write.index = 1; write.step = "trace"; renderWriteCard(); });
+      // "trace" on purpose: rendering a "watch" card starts a new animation, which
+      // is the opposite of what this block is checking.
       const clean = await page.evaluate(() => ({
         leftovers: [...document.querySelectorAll("#write-guide .write-stroke")].filter(
           (p) => p.style.strokeDasharray || p.style.strokeDashoffset
         ).length,
         pending: write.anim,
+        animating: document.getElementById("write-guide").classList.contains("animating"),
+        stroke: getComputedStyle(document.querySelector("#write-guide .write-stroke")).stroke,
       }));
       assert(clean.leftovers === 0, `no half-drawn strokes carry over (${clean.leftovers})`);
       assert(clean.pending === null, "the pending animation timer is cancelled on the next card");
+      // The class is the half that bit: `.animating .write-stroke` is transparent,
+      // so leaving it on after an interrupted playback hid the 밑글씨 for the
+      // whole copying pass. You advance mid-animation most of the time.
+      assert(!clean.animating, "the animating class is dropped too, not just the inline styles");
+      assert(
+        clean.stroke !== "rgba(0, 0, 0, 0)",
+        `the guide is visible again after an interrupted playback (${clean.stroke})`
+      );
       await page.close();
     }
 

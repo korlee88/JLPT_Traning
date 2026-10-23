@@ -1352,13 +1352,21 @@ function nextQuestion() {
 // characters**, and every character is written **twice**: once over the example,
 // then once with the pad blank. Copy first, recall second.
 //
+// **Three passes per character** (2026-10-23, "획순 먼저 보여주고 혼자 따라쓰고
+// 블라인드로 써보는 순서로 하자"): **획순 보기** plays the stroke order through,
+// **따라 쓰기** puts the example under your finger, **혼자 쓰기** takes it away.
+// Watch, copy, recall — the first pass answers "which stroke goes first", which
+// a static glyph never does, and it is the one thing you cannot work out from
+// looking at a character you have never written.
+//
 // **Practice, not a quiz: no score and no schedule**, like the 가리기 deck on the
 // same tab. What it reuses is the 한자 review queue as a SOURCE — a character
 // sitting in a word that is due today comes first. Nothing is written back.
 const WRITE_ROUND = 8;
+const WRITE_STEPS = ["watch", "trace", "recall"];
 
 const write = {
-  pool: [], index: 0, step: "trace",
+  pool: [], index: 0, step: "watch",
   strokes: [], drawing: null, trace: true, checked: false, anim: null,
 };
 
@@ -1455,9 +1463,16 @@ function writeRenderGuide() {
   svg.classList.toggle("traced", write.trace);
 }
 
+// Stops the playback AND undoes everything it set. The class matters as much as
+// the inline styles: `.animating .write-stroke` is transparent, so leaving it on
+// after an interrupted playback made the 밑글씨 invisible for the whole copying
+// pass — and you advance mid-animation as soon as you have seen enough, which is
+// most of the time. Caught by the test that checks the computed stroke rather
+// than the `traced` flag.
 function writeStopAnimation() {
   if (write.anim) clearTimeout(write.anim);
   write.anim = null;
+  document.getElementById("write-guide").classList.remove("animating");
   document.querySelectorAll("#write-guide .write-stroke").forEach((p) => {
     p.classList.remove("drawing");
     p.style.removeProperty("stroke-dasharray");
@@ -1479,10 +1494,7 @@ function writePlayOrder() {
   let i = 0;
   const step = () => {
     if (i >= paths.length) {
-      write.anim = setTimeout(() => {
-        svg.classList.remove("animating");
-        writeStopAnimation();
-      }, 700);
+      write.anim = setTimeout(writeStopAnimation, 700);
       return;
     }
     const p = paths[i++];
@@ -1496,31 +1508,47 @@ function writePlayOrder() {
   step();
 }
 
-// Two passes over the same character. `trace` puts the example under your finger;
-// `recall` clears the pad and takes it away. The step, not a toggle, decides the
-// guide — turning it off in the copying step would just be the old design back.
+// Three passes over the same character. `watch` plays the stroke order and leaves
+// the glyph on the pad; `trace` keeps it there to draw over; `recall` clears the
+// pad and takes it away. **The step decides the guide, not the toggle** — turning
+// it off in a copying step would just be the recall-first design back.
+const WRITE_STEP_LABEL = { watch: "획순 보기", trace: "따라 쓰기", recall: "혼자 쓰기" };
+const WRITE_STEP_HINT = {
+  watch: "획이 그려지는 순서를 보세요",
+  trace: "밑글씨 위를 그대로 따라 써 보세요",
+  recall: "이번엔 밑글씨 없이 써 보세요",
+};
+const WRITE_ADVANCE_LABEL = { watch: "따라 써보기 ▸", trace: "혼자 써보기 ▸" };
+
 function renderWriteCard() {
   const card = write.pool[write.index];
+  const step = write.step;
   write.strokes = [];
   write.checked = false;
-  write.trace = write.step === "trace";
+  // Only the last pass hides the example.
+  write.trace = step !== "recall";
   writeStopAnimation();
-  const tracing = write.step === "trace";
   const n = _strokeData[card.char].length;
   document.getElementById("write-progress").textContent =
-    `${write.index + 1} / ${write.pool.length} · ${tracing ? "따라 쓰기" : "혼자 쓰기"}`;
+    `${write.index + 1} / ${write.pool.length} · ${WRITE_STEP_LABEL[step]}`;
   document.getElementById("write-prompt").textContent = card.meaning;
   document.getElementById("write-note-line").textContent = card.note;
-  document.getElementById("write-hint").textContent = tracing
-    ? `${n}획 · 밑글씨 위를 그대로 따라 써 보세요`
-    : `${n}획 · 이번엔 밑글씨 없이 써 보세요`;
-  document.getElementById("write-advance").hidden = !tracing;
-  document.getElementById("write-check").hidden = tracing;
+  document.getElementById("write-hint").textContent = `${n}획 · ${WRITE_STEP_HINT[step]}`;
+  const advance = document.getElementById("write-advance");
+  advance.hidden = step === "recall";
+  advance.textContent = WRITE_ADVANCE_LABEL[step] || "";
+  document.getElementById("write-check").hidden = step !== "recall";
+  // Nothing to undo or clear while you are only watching, and 밑글씨 is forced
+  // on — so the row collapses to the one control that still means something.
+  document.getElementById("write-tools").classList.toggle("watching", step === "watch");
+  document.getElementById("write-order").textContent = step === "watch" ? "▶ 다시 보기" : "▶ 획순";
   document.getElementById("write-answer").hidden = true;
   document.getElementById("write-next").hidden = true;
   document.getElementById("write-trace").classList.toggle("on", write.trace);
   writeRenderGuide();
   writeRepaint();
+  // The whole point of the first pass is the order, so it plays itself.
+  if (step === "watch") writePlayOrder();
 }
 
 function writeCheck() {
@@ -1552,7 +1580,7 @@ async function startWriting() {
   await Promise.all([buildXrefIndex(), buildStrokeData(), buildKanjiChars()]);
   write.pool = buildWritePool(WRITE_ROUND);
   write.index = 0;
-  write.step = "trace";
+  write.step = WRITE_STEPS[0];
   writeShowPanel(true);
   renderWriteCard();
 }
@@ -1567,7 +1595,7 @@ function setupWriting() {
   // trackpad, and setPointerCapture keeps a stroke alive when the finger slides
   // off the pad mid-stroke.
   canvas.addEventListener("pointerdown", (e) => {
-    if (write.checked) return;
+    if (write.checked || write.step === "watch") return;
     e.preventDefault();
     canvas.setPointerCapture(e.pointerId);
     write.drawing = [at(e)];
@@ -1600,13 +1628,13 @@ function setupWriting() {
     e.currentTarget.classList.toggle("on", write.trace);
   });
   document.getElementById("write-advance").addEventListener("click", () => {
-    write.step = "recall";
+    write.step = WRITE_STEPS[WRITE_STEPS.indexOf(write.step) + 1];
     renderWriteCard();
   });
   document.getElementById("write-check").addEventListener("click", writeCheck);
   document.getElementById("write-next").addEventListener("click", () => {
     write.index += 1;
-    write.step = "trace";
+    write.step = WRITE_STEPS[0];
     renderWriteCard();
   });
   document.getElementById("write-quit").addEventListener("click", () => {
