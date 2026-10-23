@@ -1344,16 +1344,22 @@ function nextQuestion() {
 // here because writing a character is a different and stronger kind of recall
 // than picking it off a list, and "반복해서 봐도 잘 안 외워진다" has come up twice.
 //
-// **Practice, not a quiz: no score and no schedule.** The 한자 기초 tab's 가리기
-// deck set that precedent for the same reason — a second record of the same
-// characters would be two states to keep honest, and a self-graded one is the
-// least trustworthy of them. What it *does* reuse is the kanji review queue as a
-// SOURCE: what is due comes first, so the characters you keep missing are the
-// ones you write. Nothing is written back.
+// **Rebuilt the same day it shipped.** The first version drilled all 321
+// characters in the word files and started with the guide OFF, on the reasoning
+// that tracing is copying rather than recall. That reasoning was right about
+// tracing and wrong about the learner: "한자를 너무 모르니까 하나도 못 쓴다" —
+// there is nothing to recall yet. So it moved to the 한자 기초 tab's **105 기초
+// characters**, and every character is written **twice**: once over the example,
+// then once with the pad blank. Copy first, recall second.
+//
+// **Practice, not a quiz: no score and no schedule**, like the 가리기 deck on the
+// same tab. What it reuses is the 한자 review queue as a SOURCE — a character
+// sitting in a word that is due today comes first. Nothing is written back.
 const WRITE_ROUND = 8;
 
 const write = {
-  pool: [], index: 0, strokes: [], drawing: null, trace: true, checked: false, anim: null,
+  pool: [], index: 0, step: "trace",
+  strokes: [], drawing: null, trace: true, checked: false, anim: null,
 };
 
 let _strokeData = null; // char -> [SVG path d], from KanjiVG (CC BY-SA 3.0)
@@ -1364,31 +1370,26 @@ async function buildStrokeData() {
   return _strokeData;
 }
 
-// A character is only drillable if we have its stroke order; without the guide
-// this would be "draw from memory and hope", which teaches the wrong shape.
-// Prompts come from a word the character sits in, with the character itself
-// replaced by 〇 — uniform across all 321, and it drills the 표기 direction
-// rather than just the glyph in isolation.
+let _kanjiChars = null; // the 훈음 and composition note the 한자 기초 tab shows
+async function buildKanjiChars() {
+  if (_kanjiChars) return _kanjiChars;
+  _kanjiChars = await fetch(`data/${CURRENT_LEVEL}/kanjichar.json`).then((r) => r.json());
+  return _kanjiChars;
+}
+
+// The 기초 set, due characters first. The unit is the character, so the pool
+// cannot lose one the way the earlier word-walking version could — there, a
+// character was claimed by whichever word reached it first and a due word could
+// end up contributing nothing.
 function buildWritePool(size) {
-  const words = [..._wordIndex.values()];
   const schedule = loadReview().types.kanji || {};
-  const due = new Set(dueKeys(schedule));
-  // Due words are walked FIRST, not sorted afterwards. A character is claimed by
-  // whichever word reaches it first, so sorting at the end was too late: if a
-  // non-due word containing 社 came up earlier in the shuffle, it took 社 and the
-  // due 会社 contributed nothing — the one character the round exists to drill
-  // could drop out entirely. Each half is shuffled, so the order is still fresh.
-  const byDue = (want) => shuffle(words).filter((w) => due.has(w.word) === want);
-  const cards = [];
-  const seen = new Set();
-  for (const w of [...byDue(true), ...byDue(false)]) {
-    for (const ch of new Set(w.word.match(CJK) || [])) {
-      if (seen.has(ch) || !_strokeData[ch]) continue;
-      seen.add(ch);
-      cards.push({ char: ch, word: w, due: due.has(w.word) });
-    }
-  }
-  return cards.slice(0, size);
+  const hot = new Set();
+  for (const word of dueKeys(schedule)) for (const c of word.match(CJK) || []) hot.add(c);
+  const chars = Object.keys(_kanjiChars).filter((c) => _strokeData[c]);
+  const byHeat = (want) => shuffle(chars).filter((c) => hot.has(c) === want);
+  return [...byHeat(true), ...byHeat(false)]
+    .slice(0, size)
+    .map((c) => ({ char: c, ..._kanjiChars[c] }));
 }
 
 function writeCanvasSetup() {
@@ -1428,12 +1429,13 @@ function writeRepaint() {
   document.getElementById("write-undo").disabled = write.strokes.length === 0;
 }
 
-// The reference glyph, as SVG under the canvas. Two jobs: the faint 밑글씨 you
-// trace over, and the 획순 animation. Both are the same paths, so the stroke
-// you watch being drawn is the stroke you then trace.
+// The reference glyph, as SVG under the canvas. Two jobs: the 밑글씨 you trace
+// over, and the 획순 animation. Both are the same paths, so the stroke you watch
+// being drawn is the stroke you then trace.
 function writeRenderGuide() {
   const svg = document.getElementById("write-guide");
-  const paths = write.pool[write.index] ? _strokeData[write.pool[write.index].char] : [];
+  const card = write.pool[write.index];
+  const paths = card ? _strokeData[card.char] : [];
   svg.innerHTML = "";
   const ns = "http://www.w3.org/2000/svg";
   // Centre lines, the way a 원고지 square has them.
@@ -1494,21 +1496,28 @@ function writePlayOrder() {
   step();
 }
 
+// Two passes over the same character. `trace` puts the example under your finger;
+// `recall` clears the pad and takes it away. The step, not a toggle, decides the
+// guide — turning it off in the copying step would just be the old design back.
 function renderWriteCard() {
   const card = write.pool[write.index];
   write.strokes = [];
   write.checked = false;
+  write.trace = write.step === "trace";
   writeStopAnimation();
-  document.getElementById("write-progress").textContent = `${write.index + 1} / ${write.pool.length}`;
-  const blanked = card.word.word.split(card.char).join("〇");
-  document.getElementById("write-prompt").textContent = blanked;
-  const reading = card.word.reading !== card.word.word ? `${card.word.reading} · ` : "";
+  const tracing = write.step === "trace";
   const n = _strokeData[card.char].length;
-  document.getElementById("write-hint").textContent =
-    `${reading}${card.word.meaning}\n〇에 들어갈 글자 · ${n}획`;
+  document.getElementById("write-progress").textContent =
+    `${write.index + 1} / ${write.pool.length} · ${tracing ? "따라 쓰기" : "혼자 쓰기"}`;
+  document.getElementById("write-prompt").textContent = card.meaning;
+  document.getElementById("write-note-line").textContent = card.note;
+  document.getElementById("write-hint").textContent = tracing
+    ? `${n}획 · 밑글씨 위를 그대로 따라 써 보세요`
+    : `${n}획 · 이번엔 밑글씨 없이 써 보세요`;
+  document.getElementById("write-advance").hidden = !tracing;
+  document.getElementById("write-check").hidden = tracing;
   document.getElementById("write-answer").hidden = true;
   document.getElementById("write-next").hidden = true;
-  document.getElementById("write-check").hidden = false;
   document.getElementById("write-trace").classList.toggle("on", write.trace);
   writeRenderGuide();
   writeRepaint();
@@ -1522,31 +1531,29 @@ function writeCheck() {
   // There is no automatic recognition here, and claiming one would be worse than
   // honest self-comparison: a wrong "맞았습니다" teaches the wrong shape.
   document.getElementById("write-answer-char").textContent = card.char;
-  const own = _kanjiChars && _kanjiChars[card.char];
-  document.getElementById("write-answer-meaning").textContent = own
-    ? `${own.meaning} — ${card.word.word}(${card.word.reading}, ${card.word.meaning})`
-    : `${card.word.word}(${card.word.reading}, ${card.word.meaning})`;
+  const words = (_xrefIndex.get(card.char) || []).slice(0, 2).map(labelFor).join(", ");
+  document.getElementById("write-answer-meaning").textContent =
+    words ? `${card.meaning} — ${words}` : card.meaning;
   document.getElementById("write-answer").hidden = false;
   document.getElementById("write-check").hidden = true;
   document.getElementById("write-next").hidden = write.index === write.pool.length - 1;
+  write.trace = true;
   document.getElementById("write-guide").classList.add("traced");
+  document.getElementById("write-trace").classList.add("on");
 }
 
-let _kanjiChars = null; // the authored 훈음, when the character has one
+function writeShowPanel(on) {
+  document.getElementById("radical-intro").hidden = on;
+  document.getElementById("radical-groups").hidden = on;
+  document.getElementById("write-play").hidden = !on;
+}
+
 async function startWriting() {
-  await Promise.all([buildXrefIndex(), buildStrokeData()]);
-  if (!_kanjiChars) {
-    _kanjiChars = await fetch(`data/${CURRENT_LEVEL}/kanjichar.json`).then((r) => r.json());
-  }
+  await Promise.all([buildXrefIndex(), buildStrokeData(), buildKanjiChars()]);
   write.pool = buildWritePool(WRITE_ROUND);
   write.index = 0;
-  // Starts OFF: tracing a glyph already on the pad is copying, not recall, and
-  // recall is the only reason to write it by hand at all. 획순 and 밑글씨 are one
-  // tap away for a character you genuinely cannot picture, and 확인 turns the
-  // guide on so you can compare what you drew against it.
-  write.trace = false;
-  document.getElementById("quiz-start").hidden = true;
-  document.getElementById("write-play").hidden = false;
+  write.step = "trace";
+  writeShowPanel(true);
   renderWriteCard();
 }
 
@@ -1592,16 +1599,19 @@ function setupWriting() {
     document.getElementById("write-guide").classList.toggle("traced", write.trace);
     e.currentTarget.classList.toggle("on", write.trace);
   });
+  document.getElementById("write-advance").addEventListener("click", () => {
+    write.step = "recall";
+    renderWriteCard();
+  });
   document.getElementById("write-check").addEventListener("click", writeCheck);
   document.getElementById("write-next").addEventListener("click", () => {
     write.index += 1;
+    write.step = "trace";
     renderWriteCard();
   });
   document.getElementById("write-quit").addEventListener("click", () => {
     writeStopAnimation();
-    document.getElementById("write-play").hidden = true;
-    document.getElementById("quiz-start").hidden = false;
-    renderWrongNote();
+    writeShowPanel(false);
   });
   document.getElementById("start-writing").addEventListener("click", startWriting);
 }
