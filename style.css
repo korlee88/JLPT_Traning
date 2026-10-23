@@ -346,6 +346,12 @@ main {
 .write-guide.animating .write-stroke.drawing { stroke: var(--accent); }
 
 .write-tools { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 10px; }
+/* The 획순 보기 pass has nothing to undo, clear or trace, so the row collapses to
+   the replay button rather than showing three dead controls. */
+.write-tools.watching { grid-template-columns: 1fr; }
+.write-tools.watching #write-undo,
+.write-tools.watching #write-clear,
+.write-tools.watching #write-trace { display: none; }
 .write-tools .btn { padding: 9px 4px; font-size: 0.82rem; }
 .write-tools .btn.on { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
 #write-check, #write-next { width: 100%; }
