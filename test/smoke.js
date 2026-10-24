@@ -434,6 +434,12 @@ async function main() {
           );
           const meaningCue = (await page.textContent("#quiz-meaning")).trim();
           assert(meaningCue === "💡 뜻 힌트", `kanji quiz shows the meaning cue before tapping (got "${meaningCue}")`);
+          // The reading line is not wired on this quiz type at all — revealing
+          // it would be revealing the answer.
+          assert(
+            await page.isHidden("#quiz-reveal"),
+            "kanji quiz offers no reading reveal, the one hint that would be its own answer"
+          );
           await page.click("#quiz-meaning");
           const meaningShown = (await page.textContent("#quiz-meaning")).trim();
           assert(
@@ -450,13 +456,8 @@ async function main() {
           assert(new Set(choices).size === 4, `kanji quiz choices are all distinct (got ${choices.join(" / ")})`);
           assert(choices.every((c) => readings.includes(c)), `every kanji choice is a real reading from the data (got ${choices.join(" / ")})`);
 
-          // Tapping the word reveals its reading; the cue sits there until then.
-          const cue = (await page.textContent("#quiz-reveal")).trim();
-          assert(cue === "글자를 누르면 읽는 법", `kanji quiz shows the tap cue before peeking (got "${cue}")`);
-          const expected = await page.evaluate(() => quiz.pool[quiz.index].reading);
-          await page.click("#quiz-prompt");
-          const revealed = (await page.textContent("#quiz-reveal")).trim();
-          assert(revealed === expected, `tapping the word reveals its reading (got "${revealed}", expected "${expected}")`);
+          // Tapping the big glyph opens that same 뜻 힌트 — asserted in the
+          // block below, on a question whose hint is still closed.
         },
         async () => {
           const note = await page.textContent("#quiz-note");
@@ -797,8 +798,9 @@ async function main() {
     }
 
     // --- Peeking at a vocab reading does NOT keep it in the review queue ---
-    // The 단어 quiz asks for the meaning, so the reading is a hint rather than the
-    // answer; only the 한자 quiz's peek is penalized.
+    // The 단어 quiz asks for the meaning, so the reading is a hint rather than
+    // the answer. No hint in the app costs the review credit any more — the 한자
+    // quiz's reading reveal, the one that did, is gone (see the block below).
     {
       const page = await browser.newPage();
       await page.goto(URL, { waitUntil: "networkidle" });
@@ -830,7 +832,11 @@ async function main() {
       await page.close();
     }
 
-    // --- Peeking at a kanji reading keeps it in the review queue ---
+    // --- The 한자 quiz's hint is the 뜻, and never the reading it asks for ---
+    // It used to reveal the reading on tap, which is the answer to the question
+    // on screen (2026-10-24, "힌트가 답이야"). The reading must now be nowhere
+    // above the choices however much of the card is tapped — and because the
+    // remaining hint is not the answer, using it credits a right answer in full.
     {
       const page = await browser.newPage();
       await page.goto(URL, { waitUntil: "networkidle" });
@@ -840,21 +846,32 @@ async function main() {
       await page.click("#start-kanji");
       await page.waitForSelector("#quiz-choices .choice-btn");
 
-      const peeked = await page.evaluate(() => quiz.pool[quiz.index]);
+      const item = await page.evaluate(() => quiz.pool[quiz.index]);
       await page.click("#quiz-prompt");
-      // Answer it correctly — without the peek this would clear it from review.
-      await clickChoice(page, peeked.reading);
-
-      const peekedBox = await boxOf(page, "kanji", peeked.word);
+      const hinted = (await page.textContent("#quiz-meaning")).trim();
       assert(
-        peekedBox === 0,
-        `a peeked kanji is not credited even when answered right (${peeked.word} is in box ${peekedBox}, expected 0)`
+        hinted === `뜻: ${item.meaning}`,
+        `tapping the kanji shows its meaning (got "${hinted}", expected "뜻: ${item.meaning}")`
       );
-      const peekedDue = await page.evaluate(
-        (k) => JSON.parse(localStorage.getItem("jlpt_review_n4")).types.kanji[k].due === todayStr(),
-        peeked.word
+      // Every line of the question card except the choices, which legitimately
+      // carry the reading as one of the four.
+      const above = await page.evaluate(() =>
+        ["quiz-prompt", "quiz-reveal", "quiz-meaning", "quiz-hint", "quiz-hint-ko"]
+          .map((id) => document.getElementById(id))
+          .filter((el) => el && !el.hidden)
+          .map((el) => el.textContent)
+          .join(" | ")
       );
-      assert(peekedDue, `a peeked kanji is due again today (${peeked.word})`);
+      assert(
+        !above.includes(item.reading),
+        `the 한자 quiz shows no reading above the choices (${item.word} asks for ${item.reading}; card reads "${above}")`
+      );
+      await clickChoice(page, item.reading);
+      const box = await boxOf(page, "kanji", item.word);
+      assert(
+        box !== null && box > 0,
+        `using the 뜻 힌트 still counts as recall when answered right (${item.word} is in box ${box}, expected above 0)`
+      );
       await page.close();
     }
 
@@ -1028,8 +1045,8 @@ async function main() {
         `tapping a word shows its reading, and its meaning when known (expected "${wantReveal}", got "${revealed}")`
       );
 
-      // Reading a word is not the 독해 answer, so the peek is free — the same rule
-      // that penalizes the 한자 quiz's reading peek and spares the 단어 quiz's.
+      // Reading a word is not the 독해 answer, so the tap is free — like every
+      // other hint in the app now that the 한자 reading reveal is gone.
       await clickChoice(page, item.answer);
       const readingBox = await boxOf(page, "reading", item.passage);
       assert(
@@ -1262,9 +1279,8 @@ async function main() {
     }
 
     // --- Tapping a grammar chunk explains it, in 독해 and in 문법 ---
-    // Not penalized, by the rule the whole app follows: a reveal costs the
-    // review-queue credit only when what it reveals is that quiz's answer, and
-    // neither 독해 nor 문법 asks what ました means.
+    // Free, like every hint in the app: neither 독해 nor 문법 asks what ました
+    // means.
     {
       for (const [type, btn] of [["reading", "#start-reading"], ["grammar", "#start-grammar"]]) {
         const page = await browser.newPage({ viewport: PHONE });

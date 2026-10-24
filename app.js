@@ -942,18 +942,17 @@ async function startQuiz(type, { wrongOnly = false } = {}) {
   renderQuestion();
 }
 
-// Wires one tap-to-reveal hint line. `penalize` is true only when what's being
-// revealed IS the quiz's own answer — the reading in the 한자 quiz — in which
-// case reading it off isn't recall and selectAnswer keeps the item in the review
-// queue. A hint that isn't the answer is free: the meaning in the 한자 quiz, the
-// reading in the 단어 quiz (which asks for the meaning).
-function wireReveal(el, cue, value, { penalize = false, alsoTap = null } = {}) {
+// Wires one tap-to-reveal hint line. Every hint in the app is free, because none
+// of them reveals the asking quiz's own answer — the rule the 한자 quiz now
+// follows too: it offers the 뜻, never the reading it is asking for. A hint that
+// gave the answer away would have to cost the review-queue credit, and the way
+// to avoid that is not to offer it.
+function wireReveal(el, cue, value, { alsoTap = null } = {}) {
   el.textContent = cue;
   el.hidden = false;
   const reveal = () => {
     el.textContent = value;
     el.classList.add("revealed");
-    if (penalize) quiz.peeked = true;
   };
   el.onclick = reveal;
   if (alsoTap) {
@@ -1021,9 +1020,8 @@ function appendChunks(parent, text, revealEl) {
 
 // Builds the passage with each annotated word as its own tappable span. Tapping
 // one shows its reading in #quiz-reveal — the same line the 한자/단어 quizzes use.
-// Not penalized: the rule across the app is that a reveal costs the review-queue
-// credit only when what it reveals IS that quiz's answer, and 독해 asks which
-// statement matches the passage, not how a word is read.
+// Free, like every other hint: 독해 asks which statement matches the passage,
+// not how a word is read.
 function renderRubyPassage(promptEl, item, revealEl) {
   promptEl.textContent = "";
   if (!item.ruby) {
@@ -1099,7 +1097,6 @@ function renderQuestion() {
   meaningEl.onclick = null;
   hintKoEl.hidden = true;
   hintKoEl.textContent = "";
-  quiz.peeked = false;
   quiz.replays = 0;
   quiz.slowReplays = 0;
   quiz.answered = false;
@@ -1134,15 +1131,11 @@ function renderQuestion() {
   } else if (quiz.type === "kanji") {
     promptEl.textContent = item.word;
     hintEl.textContent = "읽는 법을 고르세요";
-    // The meaning used to sit in this hint line, visible before the question was
-    // even read — for a word you half-know that hands over the reading. It's a
-    // hint now, shown only on tap. Unlike the reading peek below it doesn't set
-    // quiz.peeked: the meaning isn't the answer here, so using it is still recall.
-    wireReveal(meaningEl, "💡 뜻 힌트", `뜻: ${item.meaning}`);
-    // Tap the word to see its reading when it's unreadable — better to look it up
-    // and learn it than to guess blind. Penalized, because here the reading is
-    // the answer: selectAnswer won't clear a peeked item from the review queue.
-    wireReveal(revealEl, "글자를 누르면 읽는 법", item.reading, { penalize: true, alsoTap: promptEl });
+    // The one hint here is the 뜻, and tapping the word itself opens it. The quiz
+    // used to also reveal the reading on tap — which is the very thing it asks
+    // for, so the hint was the answer (2026-10-24, "힌트가 답이야"). The meaning
+    // narrows a half-known word without handing it over.
+    wireReveal(meaningEl, "💡 뜻 힌트", `뜻: ${item.meaning}`, { alsoTap: promptEl });
     choices = shuffle([item.reading, ...pickReadingDistractors(quiz.allItems, item)]);
     answer = item.reading;
   } else if (quiz.type === "grammar") {
@@ -1286,10 +1279,7 @@ function selectAnswer(btn, choice, answer, item) {
       if (b.textContent === answer) b.classList.add("correct");
     });
   }
-  // Reading the answer off the peek isn't recall, so a peeked item stays in the
-  // review queue even when answered right — otherwise "몰라서 보기" would clear
-  // exactly the words that still need drilling.
-  recordAnswerOutcome(quiz.type, item[QUIZ_KEY_FIELD[quiz.type]], isCorrect && !quiz.peeked);
+  recordAnswerOutcome(quiz.type, item[QUIZ_KEY_FIELD[quiz.type]], isCorrect);
   const noteEl = document.getElementById("quiz-note");
   const note = explanationFor(quiz.type, item);
   if (note) {
