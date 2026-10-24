@@ -6,6 +6,22 @@
   <title>JLPT N4 학습 트래커</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%93%9A%3C/text%3E%3C/svg%3E" />
   <link rel="stylesheet" href="style.css?v=dev" />
+  <!-- The topbar's "오늘 할 일" line needs plan.json, and app.js only asks for it
+       once it has finished downloading and parsing. Throttled to a phone link
+       (1.6Mbps, 150ms RTT) that request did not start until 900ms — a whole
+       round trip after the page already had everything else. Starting it here
+       instead puts the line on screen at 933ms rather than 1080ms.
+       prefetch, not preload, and that is not a downgrade: `preload as="fetch"`
+       warns "not used because the request credentials mode does not match" in
+       Chromium whatever combination of crossorigin and fetch credentials it is
+       given, and the saving does not come from reusing the preload entry
+       anyway — it comes from the response already sitting in the HTTP cache
+       when app.js asks. Measured the same 933ms both ways, without the warning.
+       No ?v= on purpose: the deploy sed stamps the commit SHA onto the asset
+       URLs, and doing that to a data file would bust its cache on every deploy
+       whether or not the data changed. The level is spelled out here, so a test
+       checks it against CURRENT_LEVEL rather than letting the two drift. -->
+  <link rel="prefetch" href="data/n4/plan.json" />
 </head>
 <body>
   <header class="topbar">
