@@ -1,5 +1,40 @@
 const CURRENT_LEVEL = "n4"; // active JLPT level; see data/levels.json. Switch this (and eventually add a picker) once a new level's data/<level>/ folder exists.
 const QUIZ_RESULTS_KEY = `jlpt_quiz_results_${CURRENT_LEVEL}`;
+
+// Every data file is fetched once per page load and shared from here. Each
+// caller used to fetch its own copy, which was right in isolation and added up:
+// measured over one day's use — four rounds, the 한자 기초 tab, the 모의고사 tab
+// — 255KB of 650KB was a file coming down again for a different caller.
+// kanji.json came three times (the round, the cross-reference index, the exam),
+// reading.json and grammar.json twice each, kanjichar.json twice. Nothing owned
+// a file, so nothing could say it already had it.
+//
+// The *promise* is cached rather than the result, so two callers racing on the
+// same file share one request instead of the second starting before the first
+// resolves. A rejection is evicted: a fetch that failed on a flaky phone
+// connection should be retried by the next caller, not remembered as a failure
+// for the rest of the session.
+const _jsonCache = new Map();
+
+function loadJson(path) {
+  if (!_jsonCache.has(path)) {
+    _jsonCache.set(
+      path,
+      fetch(path)
+        .then((r) => r.json())
+        .catch((err) => {
+          _jsonCache.delete(path);
+          throw err;
+        })
+    );
+  }
+  return _jsonCache.get(path);
+}
+
+// Shorthand for the active level's folder, which is where all but strokes.json
+// live. Keeping the level in one place is also what makes the N3 switch a
+// one-line change, the way CURRENT_LEVEL is meant to work.
+const levelJson = (name) => loadJson(`data/${CURRENT_LEVEL}/${name}.json`);
 const QUIZ_TYPE_LABELS = {
   hiragana: "히라가나 쪽지시험",
   katakana: "가타카나 쪽지시험",
@@ -121,7 +156,7 @@ async function renderRadicalTab() {
   const [, xref, chars] = await Promise.all([
     buildRadicalIndex(),
     buildXrefIndex(),
-    fetch(`data/${CURRENT_LEVEL}/kanjichar.json`).then((r) => r.json()),
+    levelJson("kanjichar"),
   ]);
   const groups = new Map();
   for (const [char, g] of _radicalIndex) {
@@ -387,14 +422,7 @@ function renderQuizStartStatus() {
 // of nothing but those items. It is also the short answer to "다하기 많네"
 // (2026-10-08): drilling the six words you actually got wrong beats redoing eight
 // full quizzes to meet them again.
-let _wrongData = {}; // type -> entries, so reopening the note doesn't refetch
-
-async function wrongEntriesFor(type) {
-  if (!_wrongData[type]) {
-    _wrongData[type] = await fetch(`data/${CURRENT_LEVEL}/${type}.json`).then((r) => r.json());
-  }
-  return _wrongData[type];
-}
+const wrongEntriesFor = (type) => levelJson(type);
 
 // One line per missed item. The word-shaped types reuse the post-answer recap's
 // own first line rather than formatting it again, so the two can't drift; the
@@ -780,7 +808,7 @@ const CJK = /[\u4E00-\u9FFF]/gu;
 async function buildXrefIndex() {
   if (_xrefIndex) return _xrefIndex;
   const files = await Promise.all(
-    XREF_SOURCES.map((t) => fetch(`data/${CURRENT_LEVEL}/${t}.json`).then((r) => r.json()))
+    XREF_SOURCES.map((t) => levelJson(t))
   );
   const index = new Map();
   const words = new Map();
@@ -801,7 +829,7 @@ async function buildXrefIndex() {
 
 async function buildGloss() {
   if (_gloss) return _gloss;
-  _gloss = await fetch(`data/${CURRENT_LEVEL}/gloss.json`).then((r) => r.json());
+  _gloss = await levelJson("gloss");
   return _gloss;
 }
 
@@ -813,7 +841,7 @@ async function buildGloss() {
 // search the web for it.
 async function buildPatterns() {
   if (_patterns) return _patterns;
-  const file = await fetch(`data/${CURRENT_LEVEL}/pattern.json`).then((r) => r.json());
+  const file = await levelJson("pattern");
   _patterns = file.chunks;
   // Longest match wins, so a longer form must be tried first: ませんでした is one
   // chunk, not ません followed by でした.
@@ -848,7 +876,7 @@ function glossFor(word, reading) {
 // thing, so the file only carries groups checked by hand — narrow on purpose.
 async function buildRadicalIndex() {
   if (_radicalIndex) return _radicalIndex;
-  const groups = await fetch(`data/${CURRENT_LEVEL}/radical.json`).then((r) => r.json());
+  const groups = await levelJson("radical");
   const index = new Map();
   for (const [rad, g] of Object.entries(groups)) {
     for (const c of g.chars) {
@@ -907,8 +935,7 @@ function relatedWordLines(word) {
 // short targeted session. A normal round mixes review with fresh material
 // instead (buildQuizPool).
 async function startQuiz(type, { wrongOnly = false } = {}) {
-  const res = await fetch(`data/${CURRENT_LEVEL}/${type}.json`);
-  const items = await res.json();
+  const items = await levelJson(type);
   if (XREF_TYPES.includes(type)) await Promise.all([buildXrefIndex(), buildRadicalIndex()]);
   // 독해/문법 don't use the cross-reference note, but their tapped words show a
   // meaning, which needs both the authored glossary and the word index.
@@ -1363,7 +1390,7 @@ const write = {
 let _strokeData = null; // char -> [SVG path d], from KanjiVG (CC BY-SA 3.0)
 async function buildStrokeData() {
   if (_strokeData) return _strokeData;
-  const file = await fetch("data/strokes.json").then((r) => r.json());
+  const file = await loadJson("data/strokes.json");
   _strokeData = file.strokes;
   return _strokeData;
 }
@@ -1371,7 +1398,7 @@ async function buildStrokeData() {
 let _kanjiChars = null; // the 훈음 and composition note the 한자 기초 tab shows
 async function buildKanjiChars() {
   if (_kanjiChars) return _kanjiChars;
-  _kanjiChars = await fetch(`data/${CURRENT_LEVEL}/kanjichar.json`).then((r) => r.json());
+  _kanjiChars = await levelJson("kanjichar");
   return _kanjiChars;
 }
 
@@ -1714,7 +1741,7 @@ async function buildExamData() {
   if (_examData) return _examData;
   const names = ["exam", "kanji", "grammar", "reading"];
   const [extra, kanji, grammar, reading] = await Promise.all(
-    names.map((n) => fetch(`data/${CURRENT_LEVEL}/${n}.json`).then((r) => r.json()))
+    names.map((n) => levelJson(n))
   );
   await buildRadicalIndex();
   _examData = { ...extra, kanji, grammar, reading };
@@ -2270,9 +2297,7 @@ async function init() {
   setupRadicalMask();
   setupExam();
   setupWriting();
-  const res = await fetch(`data/${CURRENT_LEVEL}/plan.json`);
-  const plan = await res.json();
-  renderTopbar(plan);
+  renderTopbar(await levelJson("plan"));
 }
 
 init();

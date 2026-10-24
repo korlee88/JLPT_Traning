@@ -202,6 +202,20 @@ async function main() {
       const stamp = (await page.textContent(".buildstamp")).trim();
       assert(/^build \S+$/.test(stamp), `build marker is visible and stamped (got "${stamp}")`);
 
+      // plan.json is prefetched in the head so the topbar's line doesn't wait a
+      // round trip behind app.js. The href spells the level out, which the app
+      // otherwise keeps in one place — so check it against CURRENT_LEVEL rather
+      // than letting a level switch leave a prefetch pointing at the old folder.
+      const prefetched = await page.$$eval('link[rel="prefetch"]', (els) => els.map((e) => e.getAttribute("href")));
+      const level = await page.evaluate(() => CURRENT_LEVEL);
+      assert(
+        prefetched.includes(`data/${level}/plan.json`),
+        `the head prefetches the active level's plan.json (CURRENT_LEVEL is ${level}, head has ${prefetched.join(", ") || "nothing"})`
+      );
+      for (const href of prefetched) {
+        assert(!href.includes("?v="), `a prefetched data file carries no cache-busting query (got "${href}")`);
+      }
+
       for (const sel of ["#quiz-prompt", "#quiz-reveal", "#quiz-meaning", "#quiz-choices", "#quiz-note"]) {
         const lang = await page.getAttribute(sel, "lang");
         assert(lang === "ja", `${sel} is marked lang="ja" so kanji use Japanese glyph shapes (got "${lang}")`);
@@ -2421,6 +2435,52 @@ async function main() {
       assert(
         pools.nothingFresh.length === 8 && new Set(pools.nothingFresh).size === 8,
         `with no fresh items left the round fills from review instead of running short (got ${pools.nothingFresh.length})`
+      );
+      await page.close();
+    }
+
+    // --- No data file is downloaded twice in one session ---
+    // Every caller used to fetch its own copy of whatever it needed, which read
+    // fine one function at a time and cost 255KB of 650KB over a day's use:
+    // kanji.json came three times (the round, the cross-reference index, the
+    // exam), reading.json and grammar.json twice each, kanjichar.json twice.
+    // loadJson owns them now. This walks the paths that overlap — the two quiz
+    // types that build an index, the tab that reads kanjichar.json behind
+    // buildKanjiChars, the 복습 노트, and an exam section drawing from three
+    // quiz files — and fails on any URL requested twice, so a new bare fetch()
+    // reintroducing the waste shows up as a failing test rather than as a
+    // slower phone.
+    {
+      const page = await browser.newPage({ viewport: PHONE });
+      const seen = new Map();
+      page.on("request", (r) => {
+        const u = r.url().replace(URL, "").replace(/^\//, "").split("?")[0];
+        if (u.startsWith("data/")) seen.set(u, (seen.get(u) || 0) + 1);
+      });
+      await page.goto(URL, { waitUntil: "networkidle" });
+      await page.evaluate(() => startQuiz("kanji"));
+      await page.evaluate(() => startQuiz("reading"));
+      await page.click('.tab-btn[data-tab="radical"]');
+      await page.waitForSelector(".kanji-row");
+      await page.evaluate(() => buildExamSection("moji"));
+      await page.evaluate(() => renderWrongNote());
+      await page.waitForLoadState("networkidle");
+
+      // plan.json is the one URL asked for twice on purpose: the head prefetches
+      // it, and app.js then reads it from the HTTP cache rather than the network.
+      // That second request is the point of the prefetch, not a duplicate.
+      const prefetched = await page.$$eval('link[rel="prefetch"]', (els) =>
+        els.map((e) => e.getAttribute("href"))
+      );
+      const twice = [...seen].filter(([u, n]) => n > (prefetched.includes(u) ? 2 : 1));
+      assert(
+        twice.length === 0,
+        `no data file is fetched twice in a session (got ${twice.map(([u, n]) => `${u} x${n}`).join(", ")})`
+      );
+      // A guard that passed because nothing loaded would be worthless.
+      assert(
+        seen.size >= 7,
+        `the walk really loaded the overlapping files (got ${seen.size}: ${[...seen.keys()].join(", ")})`
       );
       await page.close();
     }
