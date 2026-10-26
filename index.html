@@ -107,7 +107,11 @@
       <div class="card" id="write-play" hidden>
         <p class="write-note">JLPT는 객관식이라 손글씨는 시험에 나오지 않습니다. 외우는 데 도움이 되는 연습입니다.</p>
         <p id="write-progress" class="quiz-progress"></p>
-        <p id="write-prompt" class="write-prompt"></p>
+        <!-- The prompt is the Japanese readings; the Korean 훈음 sits under it,
+             smaller. lang="ja" belongs on the readings and the composition note
+             (both carry kana and kanji), not on the Korean line. -->
+        <p id="write-prompt" class="write-prompt" lang="ja"></p>
+        <p id="write-meaning" class="write-meaning"></p>
         <p id="write-note-line" class="write-note-line" lang="ja"></p>
         <p id="write-hint" class="write-hint"></p>
         <div class="write-pad">

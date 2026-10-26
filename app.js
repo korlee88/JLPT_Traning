@@ -1379,7 +1379,11 @@ function nextQuestion() {
 // **Practice, not a quiz: no score and no schedule**, like the 가리기 deck on the
 // same tab. What it reuses is the 한자 review queue as a SOURCE — a character
 // sitting in a word that is due today comes first. Nothing is written back.
-const WRITE_ROUND = 8;
+// Five characters, each written twice after watching the order — the owner
+// asked for "5개정도만" (2026-10-26), the same number the 쪽지시험 rounds settled
+// on for the same reason: it is what actually gets done daily beside the day's
+// main block.
+const WRITE_ROUND = 5;
 const WRITE_STEPS = ["watch", "trace", "recall"];
 
 const write = {
@@ -1406,15 +1410,39 @@ async function buildKanjiChars() {
 // cannot lose one the way the earlier word-walking version could — there, a
 // character was claimed by whichever word reached it first and a due word could
 // end up contributing nothing.
+// Weighted sample without replacement, Efraimidis-Spirakis: a key of
+// random()^(1/weight) and take the largest. A plain sort by weight would serve
+// the same five characters every day for ever — the failure already reported
+// once on the review queue ("매일같은게 보임") — and a plain shuffle would spend
+// a five-card round on 捨 and 沸 as readily as on 間 and 車. This leans hard on
+// the frequent ones and still rotates every round.
+function weightedPick(items, weightOf, n) {
+  return items
+    .map((v) => ({ v, k: Math.random() ** (1 / Math.max(1, weightOf(v))) }))
+    .sort((a, b) => b.k - a.k)
+    .slice(0, n)
+    .map((x) => x.v);
+}
+
+// The 기초 set, due characters first and the rest weighted by how much of the
+// N4 material actually uses them (`freq` in kanjichar.json — see CLAUDE.md for
+// what it counts). Asked for on 2026-10-26, "가장 출제가 높은 한자들을 위주로":
+// 間 appears 69 times across the corpus and 捨 once, so a five-card round spent
+// equally on both is four fifths wasted. The unit is the character, so the pool
+// cannot lose one the way the earlier word-walking version could — there, a
+// character was claimed by whichever word reached it first and a due word could
+// contribute nothing.
 function buildWritePool(size) {
   const schedule = loadReview().types.kanji || {};
   const hot = new Set();
   for (const word of dueKeys(schedule)) for (const c of word.match(CJK) || []) hot.add(c);
   const chars = Object.keys(_kanjiChars).filter((c) => _strokeData[c]);
-  const byHeat = (want) => shuffle(chars).filter((c) => hot.has(c) === want);
-  return [...byHeat(true), ...byHeat(false)]
-    .slice(0, size)
-    .map((c) => ({ char: c, ..._kanjiChars[c] }));
+  const weight = (c) => _kanjiChars[c].freq || 1;
+  // Due characters come first and are weighted among themselves; the rest fill
+  // what is left of the round.
+  const due = weightedPick(chars.filter((c) => hot.has(c)), weight, size);
+  const rest = weightedPick(chars.filter((c) => !hot.has(c)), weight, size - due.length);
+  return [...due, ...rest].map((c) => ({ char: c, ..._kanjiChars[c] }));
 }
 
 function writeCanvasSetup() {
@@ -1537,6 +1565,13 @@ const WRITE_STEP_HINT = {
 };
 const WRITE_ADVANCE_LABEL = { watch: "따라 써보기 ▸", trace: "혼자 써보기 ▸" };
 
+// 훈독 in hiragana, 음독 in katakana, the way every dictionary prints them, so
+// the two kinds are told apart without a label: うみ ・ カイ. A character with no
+// common 훈독 at this level (社, 電, 週) shows only its 음독.
+function writeReadingLine(card) {
+  return [...(card.kun || []), ...(card.on || [])].join(" ・ ");
+}
+
 function renderWriteCard() {
   const card = write.pool[write.index];
   const step = write.step;
@@ -1548,7 +1583,14 @@ function renderWriteCard() {
   const n = _strokeData[card.char].length;
   document.getElementById("write-progress").textContent =
     `${write.index + 1} / ${write.pool.length} · ${WRITE_STEP_LABEL[step]}`;
-  document.getElementById("write-prompt").textContent = card.meaning;
+  // What to write, in Japanese — the readings, 훈독 then 음독. It was the Korean
+  // 훈음 alone until 2026-10-26 ("한자의 뜻이 한글 뜻풀이인데 일본어로 알려줘야해"):
+  // 바다 해 tells you which character is meant but nothing you would ever hear,
+  // and 海 is worth writing because うみ and カイ are. The 훈음 stays underneath,
+  // smaller, because dropping it would leave a beginner with a prompt they
+  // cannot read — the v1 failure this feature was already rebuilt once for.
+  document.getElementById("write-prompt").textContent = writeReadingLine(card);
+  document.getElementById("write-meaning").textContent = card.meaning;
   document.getElementById("write-note-line").textContent = card.note;
   document.getElementById("write-hint").textContent = `${n}획 · ${WRITE_STEP_HINT[step]}`;
   const advance = document.getElementById("write-advance");
