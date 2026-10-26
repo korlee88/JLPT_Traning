@@ -772,6 +772,73 @@ async function main() {
         noParts.length === 0,
         `every note names a component or describes the shape (bare: ${noParts.map(([c]) => c).join(" ")})`
       );
+
+      // --- kun / on: the Japanese the 쓰기 연습 prompts with ---
+      // 훈독 in hiragana (with its okurigana in parens, the way a dictionary
+      // prints it), 음독 in katakana, so the two kinds are told apart on screen
+      // without a label. A character may legitimately have no common 훈독 at
+      // this level (社, 電, 週) but never neither.
+      const hira = /^[\u3041-\u3096()]+$/;
+      const kata = /^[\u30A1-\u30FA]+$/;
+      const badReading = Object.entries(chars).filter(([, e]) => {
+        const kun = e.kun || [];
+        const on = e.on || [];
+        if (kun.length + on.length === 0) return true;
+        return !kun.every((r) => hira.test(r)) || !on.every((r) => kata.test(r));
+      });
+      assert(
+        badReading.length === 0,
+        `every character carries 훈독 in hiragana and 음독 in katakana (bad: ${badReading.map(([c]) => c).join(" ")})`
+      );
+      // Same bar as the 소리 claims above and for the same reason — these are
+      // dictionary facts, so they are checked against the words the app itself
+      // teaches wherever it has one. 達 is the kind that cannot be: the only
+      // word carrying it is 友達(ともだち), where だち is not its タツ.
+      const readingAttested = Object.entries(chars).filter(([c, e]) => {
+        const forms = [...(e.kun || []).map((r) => r.split("(")[0]), ...(e.on || []).map(toHira)];
+        return [...kanjiWords, ...vocabWords].some(
+          (w) => w.word.includes(c) && forms.some((f) => f && w.reading.includes(f))
+        );
+      });
+      assert(
+        readingAttested.length >= 100,
+        `the readings are visible in the app's own words (${readingAttested.length} of ${Object.keys(chars).length})`
+      );
+
+      // --- freq: how much of the N4 material actually uses the character ---
+      // The 쓰기 연습 weights its five cards by this, so a stale number quietly
+      // spends the round on the wrong characters. Recomputed here from the whole
+      // corpus; the check is that the ordering still holds at the top rather than
+      // exact equality, because every daily 기출 batch shifts the counts a little
+      // and breaking the suite on that would be friction for nothing.
+      {
+        const corpus = [];
+        for (const w of [...kanjiWords, ...vocabWords]) corpus.push(w.word);
+        for (const e of JSON.parse(fs.readFileSync(path.join(ROOT, "data/n4/reading.json"), "utf8")))
+          corpus.push(e.passage + e.question);
+        for (const e of JSON.parse(fs.readFileSync(path.join(ROOT, "data/n4/grammar.json"), "utf8")))
+          corpus.push(e.sentence.replace(/（[^）]*）/g, ""));
+        for (const e of JSON.parse(fs.readFileSync(path.join(ROOT, "data/n4/listening.json"), "utf8")))
+          corpus.push(e.script);
+        for (const arr of Object.values(JSON.parse(fs.readFileSync(path.join(ROOT, "data/n4/exam.json"), "utf8"))))
+          for (const e of arr) corpus.push(JSON.stringify(e));
+        const text = corpus.join("");
+        const live = Object.fromEntries(
+          Object.keys(chars).map((c) => [c, (text.match(new RegExp(c, "g")) || []).length])
+        );
+        const noFreq = Object.entries(chars).filter(([, e]) => !Number.isInteger(e.freq) || e.freq < 1);
+        assert(
+          noFreq.length === 0,
+          `every character carries a positive freq (bad: ${noFreq.map(([c]) => c).join(" ")})`
+        );
+        const byStored = Object.keys(chars).sort((a, b) => chars[b].freq - chars[a].freq);
+        const liveTop = new Set(Object.keys(live).sort((a, b) => live[b] - live[a]).slice(0, 20));
+        const drifted = byStored.slice(0, 10).filter((c) => !liveTop.has(c));
+        assert(
+          drifted.length === 0,
+          `the stored freq still ranks the corpus (stale: ${drifted.map((c) => `${c} stored ${chars[c].freq} live ${live[c]}`).join(", ")})`
+        );
+      }
     }
 
     // --- The radical line, on a word chosen to have one ---
@@ -1445,21 +1512,32 @@ async function main() {
         intro: document.getElementById("radical-intro").hidden,
         groups: document.getElementById("radical-groups").hidden,
         prompt: document.getElementById("write-prompt").textContent,
+        meaning: document.getElementById("write-meaning").textContent,
         note: document.getElementById("write-note-line").textContent,
         allBasic: write.pool.every((c) => c.meaning && c.note),
         guideStrokes: document.querySelectorAll("#write-guide .write-stroke").length,
       }));
-      assert(setup.size === 8, `a writing round is eight characters (${setup.size})`);
+      assert(setup.size === 5, `a writing round is five characters (${setup.size})`);
       assert(setup.intro && setup.groups, "the practice takes over the tab rather than sitting under the list");
       assert(
         setup.allBasic && chars[watch.char],
         `the round draws the 기초 characters this tab teaches (${watch.char})`
       );
-      // The prompt is the 훈음, not a blanked word — a beginner needs to be told
-      // what to write, not to work it out from a compound.
+      // The prompt is the Japanese — the readings, 훈독 then 음독 — not a blanked
+      // word and not the Korean 훈음 alone. A beginner still needs to be told
+      // what to write, so the 훈음 stays, one line down and smaller.
+      const want = [...chars[watch.char].kun, ...chars[watch.char].on].join(" ・ ");
       assert(
-        setup.prompt === chars[watch.char].meaning && setup.note === chars[watch.char].note,
-        `the prompt is the character's 훈음 and composition (got "${setup.prompt}")`
+        setup.prompt === want,
+        `the prompt is the character's Japanese readings (got "${setup.prompt}", expected "${want}")`
+      );
+      assert(
+        /[\u3041-\u30FA]/.test(setup.prompt) && !/[\uAC00-\uD7A3]/.test(setup.prompt),
+        `the prompt is kana, with no Hangul in it (got "${setup.prompt}")`
+      );
+      assert(
+        setup.meaning === chars[watch.char].meaning && setup.note === chars[watch.char].note,
+        `the 훈음 and the composition stay under it (got "${setup.meaning}")`
       );
       assert(
         setup.guideStrokes === (await page.evaluate(() => _strokeData[write.pool[write.index].char].length)),
@@ -1571,6 +1649,62 @@ async function main() {
       await page.close();
     }
 
+    // --- The five cards lean on the characters the exam actually uses ---
+    // Asked for on 2026-10-26, "가장 출제가 높은 한자들을 위주로". 間 appears 69
+    // times across the N4 corpus and 捨 once, so a five-card round that treats
+    // them alike is four fifths wasted. The draw is weighted by `freq`, which
+    // has to show up as a real bias — and must not collapse into serving the
+    // same five every day, which is the other half of this and the failure the
+    // review queue already shipped once ("매일같은게 보임").
+    {
+      const page = await browser.newPage({ viewport: PHONE });
+      await page.goto(URL, { waitUntil: "networkidle" });
+      await page.click('.tab-btn[data-tab="radical"]');
+      await page.click("#start-writing");
+      await page.waitForSelector("#write-prompt");
+
+      const sim = await page.evaluate(() => {
+        const all = Object.entries(_kanjiChars);
+        const flat = all.reduce((a, [, v]) => a + v.freq, 0) / all.length;
+        const counts = new Map();
+        let sum = 0;
+        let n = 0;
+        for (let i = 0; i < 2000; i++) {
+          for (const c of buildWritePool(5)) {
+            counts.set(c.char, (counts.get(c.char) || 0) + 1);
+            sum += c.freq;
+            n++;
+          }
+        }
+        const top = [...all].sort((a, b) => b[1].freq - a[1].freq).slice(0, 10).map(([c]) => c);
+        return {
+          flat: +flat.toFixed(1),
+          drawn: +(sum / n).toFixed(1),
+          reached: counts.size,
+          total: all.length,
+          topShare: +((100 * top.reduce((a, c) => a + (counts.get(c) || 0), 0)) / n).toFixed(0),
+          leads: new Set(Array.from({ length: 40 }, () => buildWritePool(5)[0].char)).size,
+        };
+      });
+      assert(
+        sim.drawn > sim.flat * 1.5,
+        `a drawn card is far likelier to be a frequent character (mean freq ${sim.drawn} drawn vs ${sim.flat} flat)`
+      );
+      assert(
+        sim.topShare >= 20,
+        `the ten most-used characters take a real share of the round (${sim.topShare}% of slots, 9.5% of the set)`
+      );
+      // Weighted, not filtered: 捨 is rare, not excluded.
+      assert(
+        sim.reached === sim.total,
+        `every 기초 character can still come up (${sim.reached} of ${sim.total})`
+      );
+      assert(
+        sim.leads >= 15,
+        `the round is not the same five every day (${sim.leads} distinct lead characters over 40 rounds)`
+      );
+      await page.close();
+    }
 
     // --- The stroke-order animation cleans up after itself ---
     // It writes inline dash offsets on every path; left behind, the next

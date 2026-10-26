@@ -325,6 +325,7 @@ main {
 #write-advance { width: 100%; }
 .write-note { color: var(--muted); font-size: 0.78rem; line-height: 1.6; margin: 0 0 10px; }
 .write-prompt { font-size: 1.6rem; font-weight: 700; text-align: center; margin: 4px 0 2px; line-height: 1.4; }
+.write-meaning { font-size: 0.95rem; text-align: center; color: var(--muted); margin: 0 0 4px; line-height: 1.5; }
 .write-hint { color: var(--muted); font-size: 0.85rem; text-align: center; margin: 0 0 12px; line-height: 1.6; white-space: pre-line; }
 
 /* The pad is square and the SVG sits exactly under the canvas, so a traced
