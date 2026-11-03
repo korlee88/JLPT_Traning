@@ -1877,6 +1877,80 @@ async function main() {
       await page.close();
     }
 
+    // --- Sitting the same paper twice gives a different paper ---
+    // The five file-drawn もんだい always varied; the nine authored ones did not,
+    // and four of them repeated in full — 課題理解 and ポイント理解 handed back
+    // every item every time, because exam.json held exactly as many as a paper
+    // needs (8 and 7). Measured before the 2026-10-28 batch: 100/100/83/80/68/
+    // 67/59/55/52/48/40% overlap on those nine. Tripling exam.json to 213 items
+    // puts every もんだい at or under 35%. This asserts the ceiling rather than
+    // the counts, so growing a pool can't be undone by raising a count.
+    {
+      const page = await browser.newPage({ viewport: PHONE });
+      await page.goto(URL, { waitUntil: "networkidle" });
+      const worst = await page.evaluate(async () => {
+        // Identity = everything the builder does NOT re-shuffle per render.
+        // Including `choices` would make every render look unique and the whole
+        // measurement would read 0%.
+        const id = (q) => JSON.stringify([q.prompt, q.sub, q.speech, q.answer, q.note, q.context && q.context.body]);
+        const out = [];
+        for (const spec of EXAM_SPEC) {
+          const runs = [];
+          for (let i = 0; i < 60; i++) runs.push((await buildExamSection(spec.id)).questions);
+          for (const m of spec.mondai) {
+            const sets = runs.map((qs) => new Set(qs.filter((q) => q.mondai.n === m.n).map(id)));
+            let ov = 0;
+            let n = 0;
+            for (let i = 0; i + 1 < sets.length; i += 2) {
+              const a = sets[i];
+              const c = sets[i + 1];
+              ov += [...a].filter((x) => c.has(x)).length / a.size;
+              n++;
+            }
+            out.push({
+              who: `${spec.id} 問題${m.n} ${m.ko}`,
+              count: m.count,
+              pool: new Set(sets.flatMap((x) => [...x])).size,
+              repeat: Math.round((100 * ov) / n),
+            });
+          }
+        }
+        return out.sort((a, b) => b.repeat - a.repeat);
+      });
+      const over = worst.filter((x) => x.repeat > 50);
+      assert(
+        over.length === 0,
+        `no もんだい repeats more than half its questions on a second sitting (worst: ${worst
+          .slice(0, 3)
+          .map((x) => `${x.who} ${x.repeat}%`)
+          .join(", ")})`
+      );
+      // The ceiling comes from pool size, so say that out loud: a もんだい whose
+      // pool is barely its paper count cannot vary however the draw is written.
+      const thin = worst.filter((x) => x.pool < x.count * 2);
+      assert(
+        thin.length === 0,
+        `every もんだい draws from at least twice what one paper uses (thin: ${thin
+          .map((x) => `${x.who} ${x.pool}/${x.count}`)
+          .join(", ")})`
+      );
+      await page.close();
+    }
+
+    // --- 문장 만들기's star is a 0-based index into `ordered` ---
+    // app.js answers with item.ordered[item.star]. A 1-based value reads one
+    // part to the right and, on the last position, makes the answer undefined —
+    // which is what 16 new items did when they first went in. The round-trip
+    // test below catches it as "choices don't contain the answer"; this names it.
+    {
+      const order = JSON.parse(fs.readFileSync(path.join(ROOT, "data/n4/exam.json"), "utf8")).order;
+      const bad = order.filter((it) => !(it.star >= 0 && it.star < it.ordered.length));
+      assert(
+        bad.length === 0,
+        `every 문장 만들기 item's star points at one of its parts (bad: ${bad.map((b) => b.ordered.join("/")).join(", ")})`
+      );
+    }
+
     // --- A paper never asks the same thing twice ---
     // 問題1 prints 飛行機 and asks for its reading; 問題2 then asks you to spell
     // ひこうき with the answer already on the paper above. The two もんだい drew
