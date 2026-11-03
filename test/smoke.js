@@ -2265,6 +2265,56 @@ async function main() {
       await page.close();
     }
 
+    // --- grammar.json keeps its shape and covers the 접속 families the real section tests ---
+    // The first 89 entries were almost all sentence-ending patterns: only 2 tested
+    // a particle, none tested なのに (명사·な형용사 접속), 자동사/타동사 +ている/てある,
+    // どれ/どちら, 가능형 or たい/たがる. Those are what a 문법 section is mostly made
+    // of (2026-11-03, 고득점·합격 문법 확인 문제를 본 뒤). This pins the shape of the whole
+    // file and that each family keeps a real number of questions, so a later edit
+    // cannot quietly thin them back out.
+    {
+      const all = JSON.parse(fs.readFileSync(path.join(ROOT, "data/n4/grammar.json"), "utf8"));
+      const bare = (t) => t.replace(/（[^）]*）/g, "");
+      const bad = [];
+      const seenS = new Set();
+      const seenM = new Set();
+      for (const e of all) {
+        const w = bare(e.sentence).slice(0, 14);
+        if (!Array.isArray(e.choices) || e.choices.length !== 4) bad.push(`${w}: ${e.choices && e.choices.length} choices`);
+        else if (new Set(e.choices).size !== 4) bad.push(`${w}: duplicate choices`);
+        if (!e.choices.includes(e.answer)) bad.push(`${w}: answer not among the choices`);
+        if (!e.note || e.note.length < 70) bad.push(`${w}: note under 70 chars`);
+        if (seenS.has(e.sentence)) bad.push(`${w}: duplicate sentence`);
+        if (seenM.has(e.meaning)) bad.push(`${w}: duplicate meaning`);
+        seenS.add(e.sentence);
+        seenM.add(e.meaning);
+        // 々 is outside the ruby range, so it would render unannotated. Latin is only
+        // checked in the choices: one sentence legitimately labels speakers A / B.
+        if (/々/.test(e.sentence + e.choices.join("")) || /[A-Za-z]/.test(e.choices.join(""))) {
+          bad.push(`${w}: 々 or a Latin letter where the app cannot annotate or speak it`);
+        }
+      }
+      assert(bad.length === 0, `grammar.json: ${bad.length} problem(s): ${bad.slice(0, 3).join(" | ")}`);
+
+      const ans = (e) => bare(e.answer);
+      const particles = new Set(["で", "に", "を", "が", "も", "や", "から", "まで", "までに", "の", "は", "と", "へ"]);
+      const families = {
+        "조사": all.filter((e) => particles.has(ans(e))).length,
+        "なのに / のに": all.filter((e) => ["なのに", "のに"].includes(ans(e))).length,
+        "자동사·타동사 (ている/てある)": all.filter((e) => /자동사|타동사/.test(e.note)).length,
+        "どれ/どちら/どう/どんな/何も": all.filter((e) => ["どれ", "どちら", "どう", "どんな", "何も", "何でも"].includes(ans(e))).length,
+        "가능형·見える/聞こえる": all.filter((e) => /가능형|見える|聞こえる/.test(e.note)).length,
+        "たい / たがる": all.filter((e) => /たがる|たがって/.test(e.note)).length,
+        "수수 표현": all.filter((e) => /くれる|あげる|もらう|くださ|さしあげ/.test(e.note)).length,
+      };
+      const want = { "조사": 20, "なのに / のに": 3, "자동사·타동사 (ている/てある)": 5, "どれ/どちら/どう/どんな/何も": 5, "가능형·見える/聞こえる": 4, "たい / たがる": 2, "수수 표현": 8 };
+      const thin = Object.entries(want).filter(([k, n]) => families[k] < n);
+      assert(
+        thin.length === 0,
+        `every 접속 family keeps its questions (thin: ${thin.map(([k, n]) => `${k} ${families[k]}/${n}`).join(", ")})`
+      );
+    }
+
     // --- 청해 says nothing extra on answering ---
     // Its script is spoken already and both replay buttons go unlimited the moment
     // you answer, so a third control repeating the same sentence would only crowd
