@@ -1287,6 +1287,12 @@ async function main() {
       await page.goto(URL, { waitUntil: "networkidle" });
       await page.click("#start-grammar");
       await page.waitForSelector("#quiz-choices .choice-btn");
+      // The blank direction: ★ questions (random since 2026-11-05) show slots
+      // where the furigana'd sentence would be, so pin the one asserted here.
+      await page.evaluate(() => {
+        quiz.modeOverride = "blank";
+        renderQuestion();
+      });
       assert(
         !(await page.isVisible("#quiz-reveal")),
         "the 문법 reveal line stays off until something is tapped"
@@ -1401,6 +1407,7 @@ async function main() {
         await page.click('.tab-btn[data-tab="quiz"]');
         await page.click(btn);
         await page.waitForSelector("#quiz-choices .choice-btn");
+        await page.evaluate(() => (quiz.modeOverride = "blank"));
         // 5 of the 89 문법 sentences put the whole ending in the blank
         // (明日、雨が降る＿＿＿。), so the chunk is in the *answer* and the
         // sentence really has none. A round drawing one is about 1 in 18, which
@@ -1449,7 +1456,9 @@ async function main() {
         const all = await fetch("data/n4/reading.json").then((r) => r.json());
         let best = null;
         let bestLen = -1;
-        for (const e of all) {
+        // 단문 only: 중문 and 정보검색 (kind "long"/"info", 2026-11-05) are longer
+        // on purpose — the paper's run a full page — and get their own check below.
+        for (const e of all.filter((x) => !x.kind)) {
           for (const k of _patternKeys) {
             const len = e.ruby.length + k.length + _patterns[k].length;
             if (e.ruby.includes(k) && len > bestLen) {
@@ -1472,6 +1481,22 @@ async function main() {
         worst.bottom <= PHONE.height,
         `the longest chunk explanation leaves the choices on screen (last choice ends at y=${worst.bottom} after tapping ${worst.chunk}, fold ${PHONE.height})`
       );
+            // 중문·정보검색: the choices may sit below the fold, but the question and the
+      // first choice have to be on screen without scrolling, so it is never a wall
+      // of text with nothing to answer in sight.
+      const longOnes = await page.evaluate(() =>
+        quiz.allItems.filter((e) => e.kind).map((e) => {
+          quiz.pool = [e];
+          quiz.index = 0;
+          renderQuestion();
+          const first = document.querySelector("#quiz-choices .choice-btn");
+          return { kind: e.kind, top: Math.round(first.getBoundingClientRect().top), q: e.question.slice(0, 12) };
+        })
+      );
+      const kinds = new Set(longOnes.map((x) => x.kind));
+      assert(kinds.has("long") && kinds.has("info"), `reading.json carries 중문 and 정보검색 entries (got ${[...kinds]})`);
+      const buried = longOnes.filter((x) => x.top > PHONE.height - 40);
+      assert(buried.length === 0, `every 중문/정보검색 question shows its first choice on screen (${buried.map((x) => x.q).join(", ")})`);
       await page.close();
     }
 
@@ -2229,6 +2254,62 @@ async function main() {
       await page.close();
     }
 
+    // --- 문법 ★ (もんだい2) and 독해 중문·정보검색 (もんだい5·6), 2026-11-05 ---
+    // The ★ parts are the entry's own sentence cut in four: putting them back
+    // together must give exactly the blank question's filled sentence, ruby and
+    // all, so the two directions can never drift into testing different things.
+    {
+      const grammar = JSON.parse(fs.readFileSync(path.join(ROOT, "data/n4/grammar.json"), "utf8"));
+      const bad = [];
+      let withOrder = 0;
+      for (const g of grammar) {
+        if (!g.order) continue;
+        withOrder++;
+        const o = g.order;
+        const full = g.sentence.replace("＿＿＿", g.answer);
+        if (o.prefix + o.ordered.join("") + o.suffix !== full) bad.push(`${full.slice(0, 15)}: parts do not rebuild the sentence`);
+        if (o.ordered.length !== 4 || new Set(o.ordered).size !== 4) bad.push(`${full.slice(0, 15)}: needs 4 distinct parts`);
+        if (!(o.star >= 0 && o.star < 4)) bad.push(`${full.slice(0, 15)}: star out of range`);
+      }
+      assert(bad.length === 0, `문법 ★ data rebuilds each sentence (${bad.slice(0, 4).join("; ")})`);
+      assert(withOrder >= 150, `nearly every 문법 entry has a ★ version (got ${withOrder} of ${grammar.length})`);
+
+      const reading = JSON.parse(fs.readFileSync(path.join(ROOT, "data/n4/reading.json"), "utf8"));
+      const count = (k) => reading.filter((e) => e.kind === k).length;
+      assert(count("long") >= 12 && count("info") >= 12, `독해 carries 중문 and 정보검색 (long ${count("long")}, info ${count("info")})`);
+      assert(reading.every((e) => !e.kind || ["long", "info"].includes(e.kind)), "독해 kind is only long or info");
+
+      const page = await browser.newPage({ viewport: PHONE });
+      await page.goto(URL, { waitUntil: "networkidle" });
+      await page.click('.tab-btn[data-tab="quiz"]');
+      await page.click("#start-grammar");
+      await page.waitForSelector("#quiz-choices .choice-btn");
+      const star = await page.evaluate(() => {
+        const item = quiz.allItems.find((g) => g.order);
+        quiz.pool[quiz.index] = item;
+        quiz.modeOverride = "order";
+        renderQuestion();
+        return {
+          item,
+          prompt: document.getElementById("quiz-prompt").textContent,
+          choices: [...document.querySelectorAll("#quiz-choices .choice-btn")].map((b) => b.textContent).sort(),
+          answer: quiz.answer,
+        };
+      });
+      assert(star.prompt.includes("★"), `the ★ question marks the slot (got "${star.prompt}")`);
+      assert(
+        JSON.stringify(star.choices) === JSON.stringify([...star.item.order.ordered].sort()),
+        `the ★ choices are the sentence's own four parts (got ${star.choices.join(" / ")})`
+      );
+      assert(star.answer === star.item.order.ordered[star.item.order.star], "the ★ answer is the part at the star");
+      await clickChoice(page, star.answer);
+      const note = await page.textContent("#quiz-note");
+      assert(note.startsWith("순서:") && note.includes(star.item.note), `the ★ note gives the order, then the grammar note (got "${note.slice(0, 60)}")`);
+      const box = await boxOf(page, "grammar", star.item.sentence);
+      assert(box !== null && box > 0, `a right ★ answer schedules the grammar entry's own key (box ${box})`);
+      await page.close();
+    }
+
     // --- 문법 renders at its own size, not the single-kanji 2.6rem ---
     // Its sentences carry furigana as 漢字（かな）, which roughly doubles the
     // character count; at 2.6rem one ran over three lines on a phone.
@@ -2333,6 +2414,10 @@ async function main() {
       await page.click('.tab-btn[data-tab="quiz"]');
       await page.click("#start-grammar");
       await page.waitForSelector("#quiz-choices .choice-btn");
+      await page.evaluate(() => {
+        quiz.modeOverride = "blank";
+        renderQuestion();
+      });
       await page.locator("#quiz-choices .choice-btn").first().click();
       const { spoken, want } = await page.evaluate(() => {
         const e = quiz.pool[quiz.index];
