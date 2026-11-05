@@ -75,8 +75,13 @@ const MASTERED_BOX = REVIEW_INTERVALS.length - 1;
 // QUIZ_ROUND_SIZE is empty on purpose rather than deleted: it is the per-type
 // override and has been used twice in the last week, so this records "nothing
 // differs right now" instead of removing a mechanism that keeps coming back.
+//
+// It came back on 2026-11-05: kana goes to 15 ("히라가나, 가타가나 너무 못
+// 외웠네"). A kana question is a single glance — one character, four readings —
+// so fifteen take about as long as five of anything else, and the chart is a
+// closed set of 104 where more sightings per sitting is the point.
 const DEFAULT_ROUND_SIZE = 5;
-const QUIZ_ROUND_SIZE = {};
+const QUIZ_ROUND_SIZE = { hiragana: 15, katakana: 15 };
 
 function roundSizeFor(type) {
   return QUIZ_ROUND_SIZE[type] || DEFAULT_ROUND_SIZE;

@@ -250,8 +250,8 @@ async function main() {
       // Every type is at DEFAULT_ROUND_SIZE; listed one by one anyway so a
       // per-type override can't be added without this file noticing.
       const EXPECTED_ROUND_SIZE = {
-        "#start-hiragana": 5,
-        "#start-katakana": 5,
+        "#start-hiragana": 15,
+        "#start-katakana": 15,
         "#start-loanword": 5,
         "#start-kanji": 5,
         "#start-vocab": 5,
