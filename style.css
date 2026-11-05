@@ -137,6 +137,9 @@ main {
    on 2026-10-07. Single-word prompts (한자/단어/가나) keep the full 2.6rem. */
 .quiz-prompt.sentence { font-size: 1.2rem; line-height: 1.7; text-align: left; }
 .quiz-prompt.tappable { cursor: pointer; }
+.quiz-target { font-size: 1.9rem; font-weight: 700; text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 6px; margin: 0 2px; }
+.quiz-target.blank { font-size: inherit; font-weight: 400; }
+.quiz-choices.kanji-choices .choice-btn { font-size: 1.5rem; }
 /* No display rule here on purpose: the [hidden] attribute does the hiding, so
    this can't repeat the .quiz-replay bug where an author `display` beat it. */
 /* Marks which words in a 독해 passage can be tapped for a reading. Dotted rather
