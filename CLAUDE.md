@@ -70,7 +70,11 @@ vocab.json      [{ word, reading, meaning, blank, blankAnswer, blankWrong: [3], 
 kanji.json      [{ word, reading, meaning, sentence, sentenceKo }]
                   quiz is もんだい1 読み / もんだい2 表記: `sentence` contains `word`
                   exactly once and no other kanji
-grammar.json    [{ sentence, meaning, choices: [4 strings], answer, note }]
+grammar.json    [{ sentence, meaning, choices: [4 strings], answer, note,
+                   order?: { prefix, ordered: [4], star, suffix } }]
+                  `order` is the ★ (もんだい2) version of the same sentence:
+                  prefix + ordered.join("") + suffix must equal the filled
+                  sentence exactly (a test checks it); `star` is 0-based
                   `sentence` carries furigana as 漢字（かな）and one ＿＿＿ blank;
                   `choices` are bare suffixes that attach where the blank sits
 reading.json    [{ passage, ruby, translation, question, questionTranslation,
@@ -78,7 +82,9 @@ reading.json    [{ passage, ruby, translation, question, questionTranslation,
                   `ruby` is the same text with 漢字（かな）furigana; stripping the
                   annotations must reproduce `passage` exactly (a test checks it).
                   `translation` is the passage in Korean, shown after answering;
-                  `questionTranslation` is the question in Korean, shown with it
+                  `questionTranslation` is the question in Korean, shown with it.
+                  `kind?` is "long" (もんだい5 中文) or "info" (もんだい6 情報検索,
+                  rendered in a box); absent means 短文
 listening.json  [{ script, meaning, choices: [3] }]     quiz speaks `script` via Web Speech API;
                                                           `choices` are 3 authored near-misses of `meaning`
 gloss.json      { "<kanji run>": { "<reading>": "<Korean>" } }   the tap glossary for 독해·문법.
@@ -144,6 +150,12 @@ kanjichar.json  { "<char>": { meaning, kun[], on[], freq, note } }   one row per
 - **The sentences are original, and all kana except the target** — 374 of them, none from the photos (several of the book's — 自転車で いけば, 生物の 研究, 営業じかん — were deliberately avoided). Kana-only means the underline is the only thing being read and there is no furigana to render. `test/smoke.js` asserts the shape of all 374, that the near-misses never touch printed kana, and walks every entry at 390×844 with 다음 on screen.
 - The note gains one line, the sentence in Korean (`→ 맑은 날에는 빨래를 합니다.`). Its first line is unchanged, so the 복습 노트's `reviewLine` still reads it.
 - **`kanjiLookalikes` used to double a character** — 洗濯 got `濯濯`, because 濯 is 洗's 氵 sibling and already in the word. It skips siblings in the word now, and a test checks every word; the 모의고사's 표기 questions had the same defect.
+
+**문법·독해 쪽지시험 follow the 文法・読解 paper too** (2026-11-05, the photographed paper's もんだい1–6 with "이건 문법 독해 쪽지 시험인데 같은 유사한 방식으로 갱신해줘").
+
+- **문법 = もんだい1 (빈칸) or もんだい2 (★ 순서), 35% ★.** The ★ version is the entry's *own* sentence cut in four (`order`), so both directions test the same grammar point and share the `sentence` review key. 156 of 159 have one; 安ければ、/ここに入るな are too short for four parts, and この部屋は広いし、明るいです is left out because the two adjectives swap grammatically. **Each split was chosen so only one order is grammatical** — two free noun phrases (学校へ電車で / 電車で学校へ) or a movable adverb is the trap, and several first drafts had it (彼が来るまで、ここで → ここで彼が来るまで). The rebuild-the-sentence check is machine-run; uniqueness is not, so re-read any new `order` with that question in mind. The note opens with `순서: A → B → ★C → D`, then the filled sentence, the meaning and the grammar note.
+- **독해 adds もんだい5 中文 and もんだい6 情報検索**: 12 of each, original, one question per entry (the quiz is one question per item; the paper's 3-questions-per-passage stays on the 모의고사 tab). 정보검색 notices keep their line breaks and render in a box (`.passage.info`). `passage` is generated from `ruby`, never typed, so `stripRuby(ruby) === passage` holds by construction. Their kanji runs added 87 pairs to `gloss.json`.
+- **The longer passages relax one budget, on purpose.** "The longest chunk explanation leaves the choices on screen" now covers 단문 only; a 중문 with a tapped explanation runs ~40px past 844, which is what a full-page passage does. What is asserted for them instead is that the first choice is on screen without scrolling.
 
 **The kanji quiz picks its distractors by shape, not at random** (`pickReadingDistractors`). Random readings let the answer be found without reading the kanji at all: `売れる` against れんしゅう/げんき/いちど is settled by the trailing れる. The picker now prefers readings sharing the word's okurigana tail (`okuriganaTail`), then a similar mora count, then the same opening mora — measured over the current data, that cut "answerable from the okurigana tail alone" from 24% to 8% and "answerable from length alone" from 43% to 1%. It also dedupes by reading, because preferring similar readings would otherwise show a homophone pair as the same choice twice (none in `kanji.json` yet — `姉`/`お姉さん` collide on *meaning*, which the kanji quiz only shows as a hint). The remaining 8% is data-bound: `売れる` is still the lone `〜れる` reading in the file, so nothing can match its tail until another arrives.
 
@@ -247,7 +259,7 @@ The next day the same report came in for 청해, where the ratio was less obviou
 
 Running that number over every type at that point put 문법 at **~3 rounds** on 15 entries — worse than either of the two that had already been reported — so it was flagged in #38 and fixed in #39 (15 → 89, ~18 rounds). The owner then asked for the whole app to be brought up to par at once, which #40 did: 독해 41 → 90, 외래어 52 → 90, and both kana files to the complete chart. **Every type now sits at ~18 rounds or better**, with 886 entries across the eight files. Re-run the number when any file changes rather than guessing from the entry count alone.
 
-At a round of 5 the review cap takes 2 and 3 slots are fresh, which puts the eight types at: 가나 ~13 each (104, at their round of 15: cap 7, 8 fresh), 외래어 30 (90), 단어 32 (96), 한자 ~74 (223), 문법 ~53 (159), 독해 30 (90), 청해 30 (90) — every type past 30 rounds before it has shown you everything.
+At a round of 5 the review cap takes 2 and 3 slots are fresh, which puts the eight types at: 가나 ~13 each (104, at their round of 15: cap 7, 8 fresh), 외래어 30 (90), 단어 32 (96), 한자 ~74 (223), 문법 ~53 (159), 독해 38 (114), 청해 30 (90) — every type past 30 rounds before it has shown you everything.
 
 **The cap is floored, not rounded** (`Math.max(1, Math.floor(size * REVIEW_SHARE))`). At a round of 5 rounding would give review 3 of the 5 slots — past half, which is the one thing `REVIEW_SHARE` exists to bound, and the failure mode the owner already reported twice. Even round sizes come out the same either way, so it went unnoticed until 독해/청해 went to 5 and now applies to every type. A test that recomputes the cap has to use `floor` and the round length it actually read off the page: one copy still said `Math.round(10 * REVIEW_SHARE)` and would have expected 3 where the app gives 2.
 

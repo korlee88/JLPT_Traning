@@ -1219,7 +1219,7 @@ function renderQuestion() {
   const replaysEl = document.getElementById("quiz-replays");
   const revealEl = document.getElementById("quiz-reveal");
   const meaningEl = document.getElementById("quiz-meaning");
-  promptEl.classList.remove("passage", "sentence", "tappable");
+  promptEl.classList.remove("passage", "sentence", "tappable", "info");
   promptEl.onclick = null;
   revealEl.hidden = true;
   revealEl.classList.remove("revealed");
@@ -1305,7 +1305,21 @@ function renderQuestion() {
     wireReveal(meaningEl, "💡 뜻 힌트", `뜻: ${item.meaning}`, { alsoTap: promptEl });
     choices = shuffle([item.reading, ...pickReadingDistractors(quiz.allItems, item)]);
     answer = item.reading;
+  } else if (quiz.type === "grammar" && item.order && (quiz.modeOverride || (Math.random() < 0.35 ? "order" : "blank")) === "order") {
+    // もんだい2 文の文法2 (2026-11-05, photographed 文法・読解 paper: "같은 유사한
+    // 방식으로 갱신해줘"). The same sentence as the blank question, cut into four
+    // parts around the grammar point; you put them in order and pick the one that
+    // lands on ★. One entry, two directions, one review key — as 한자 does with
+    // 読み/表記. `order` is authored so that only one order is grammatical.
+    quiz.mode = "order";
+    promptEl.classList.add("sentence");
+    const slots = item.order.ordered.map((_, i) => (i === item.order.star ? "＿★＿" : "＿＿"));
+    renderGlossedSentence(promptEl, `${item.order.prefix}${slots.join(" ")}${item.order.suffix}`, revealEl);
+    hintEl.textContent = `★에 들어갈 것을 고르세요 — ${item.meaning}`;
+    choices = shuffle(item.order.ordered);
+    answer = item.order.ordered[item.order.star];
   } else if (quiz.type === "grammar") {
+    quiz.mode = "blank";
     promptEl.classList.add("sentence");
     renderGlossedSentence(promptEl, item.sentence, revealEl);
     hintEl.textContent = item.meaning;
@@ -1313,6 +1327,9 @@ function renderQuestion() {
     answer = item.answer;
   } else if (quiz.type === "reading") {
     promptEl.classList.add("passage");
+    // もんだい6 情報検索 notices sit in a box like the paper's, so a timetable
+    // reads as a notice rather than as run-on prose.
+    if (item.kind === "info") promptEl.classList.add("info");
     renderRubyPassage(promptEl, item, revealEl);
     hintEl.textContent = item.question;
     // Shown outright rather than behind a tap, unlike the 한자 quiz's 뜻 힌트:
@@ -1385,6 +1402,15 @@ function explanationFor(type, item) {
         item.word
       );
     case "grammar":
+      // A ★ question shows the order first: which part went where is the
+      // thing that was asked, and the note then explains the grammar point.
+      if (quiz.type === "grammar" && quiz.mode === "order" && item.order && quiz.pool[quiz.index] === item) {
+        const o = item.order;
+        const seq = o.ordered.map((p, i) => (i === o.star ? `★${p}` : p)).join(" → ");
+        return [`순서: ${seq}`, `${o.prefix}${o.ordered.join("")}${o.suffix}`, item.meaning, item.note]
+          .filter(Boolean)
+          .join("\n");
+      }
       return item.note || null;
     case "reading":
       // The Korean translation of the passage comes first, then the explanation.
