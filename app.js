@@ -653,6 +653,106 @@ function pickReadingDistractors(items, item) {
     .map((v) => v.reading);
 }
 
+// Wrong readings shaped like the real 漢字読み ones: the answer with ONE mora
+// changed in the way N4 actually tests — a long vowel added or dropped
+// (せかい/せいかい, けんきゅう/けんきゅ), a 탁점 flipped (じてんしゃ/じでんしゃ),
+// a small っ added or dropped, or a 요음 swapped (しゃ/ちゃ, しゅ/しょ). Picking
+// other words' readings instead lets the answer be found by elimination; a
+// near-miss can only be ruled out by knowing how the word is pronounced.
+// Only the part the kanji spells is touched — the okurigana and a leading お
+// are printed in the question, so changing them would be eliminated unread.
+const DAKUTEN_SETS = [
+  "かが", "きぎ", "くぐ", "けげ", "こご", "さざ", "しじ", "すず", "せぜ", "そぞ",
+  "ただ", "てで", "とど", "はばぱ", "ひびぴ", "ふぶぷ", "へべぺ", "ほぼぽ",
+];
+const LONG_AFTER = { う: "おこそとのほもよろごぞどぼぽょくすつぬふむゆるぐずぶぷゅ", い: "えけせてねへめれげぜでべぺ" };
+const YOON_SWAPS = [["しゃ", "ちゃ"], ["しゅ", "ちゅ"], ["しょ", "ちょ"], ["じゃ", "ちゃ"], ["ゅう", "ょう"], ["ゅ", "ょ"]];
+
+// Which characters of the reading each kanji run spells. 昼ご飯 → ひる|ご|はん:
+// the ご is printed in the question, so only ひる and はん may change.
+function kanjiSpans(word, reading) {
+  const parts = word.match(/[\u4E00-\u9FFF]+|[^\u4E00-\u9FFF]+/g) || [];
+  const re = new RegExp(
+    "^" + parts.map((p) => (/[\u4E00-\u9FFF]/.test(p) ? "(.+?)" : `(${p})`)).join("") + "$",
+    "d"
+  );
+  const m = re.exec(reading);
+  if (!m) return [[0, reading.length]];
+  return parts.map((p, i) => (/[\u4E00-\u9FFF]/.test(p) ? m.indices[i + 1] : null)).filter(Boolean);
+}
+
+function readingVariants(word, reading) {
+  const out = { long: [], daku: [], sokuon: [], yoon: [] };
+  const at = (i, del, ins) => reading.slice(0, i) + ins + reading.slice(i + del);
+  for (const [lo, hi] of kanjiSpans(word, reading)) {
+    for (let i = lo; i < hi; i++) {
+      const c = reading[i];
+      const next = reading[i + 1];
+      const set = DAKUTEN_SETS.find((g) => g.includes(c));
+      if (set) for (const alt of set) if (alt !== c) out.daku.push(at(i, 1, alt));
+      for (const [v, prev] of Object.entries(LONG_AFTER)) {
+        if (c === v && i > lo && prev.includes(reading[i - 1])) out.long.push(at(i, 1, ""));
+        // Only where a long vowel could really stand: not before ん/っ, which
+        // gives shapes like ていんいん that nobody would pick.
+        // Nor right before printed okurigana — しろうい reads as broken, not as
+        // a plausible misspelling.
+        const beforeKana = i + 1 === hi && hi < reading.length;
+        if (prev.includes(c) && next !== v && !/[んっ]/.test(next || "") && !beforeKana) out.long.push(at(i + 1, 0, v));
+      }
+      if (c === "っ") out.sokuon.push(at(i, 1, ""));
+      else if (i > lo && /[かきくけこさしすせそたちつてとぱぴぷぺぽ]/.test(c) && !/[っんー]/.test(reading[i - 1]))
+        out.sokuon.push(at(i, 0, "っ"));
+    }
+    const span = reading.slice(lo, hi);
+    for (const [a, b] of YOON_SWAPS) {
+      for (const [from, to] of [[a, b], [b, a]]) {
+        const j = span.indexOf(from);
+        if (j >= 0) out.yoon.push(reading.slice(0, lo + j) + to + reading.slice(lo + j + from.length));
+      }
+    }
+  }
+  // One from each kind before a second from any, so the three wrong choices
+  // test three different things rather than three 탁점 flips.
+  const seen = new Set([reading]);
+  const kinds = shuffle(Object.keys(out)).map((k) => shuffle(out[k]));
+  const picked = [];
+  for (let round = 0; picked.length < 3 && kinds.some((k) => k.length); round++) {
+    for (const k of kinds) {
+      while (k.length) {
+        const v = k.shift();
+        if (seen.has(v) || v.startsWith("っ") || /っ$|んっ|っっ/.test(v)) continue;
+        seen.add(v);
+        picked.push(v);
+        break;
+      }
+      if (picked.length === 3) break;
+    }
+  }
+  return picked;
+}
+
+// Near-misses first, then other words' readings (shape-matched) to fill a
+// short word like 目 that has fewer than three variants.
+function kanjiReadingChoices(items, item) {
+  const near = readingVariants(item.word, item.reading);
+  if (near.length >= 3) return near.slice(0, 3);
+  const fill = pickReadingDistractors(items, item).filter((r) => !near.includes(r));
+  return [...near, ...fill].slice(0, 3);
+}
+
+// The sentence with its one target word underlined (.quiz-target), the shape
+// of every 문자·어휘 question on the real paper. `shown` is what the underline
+// carries: the kanji for 漢字読み, the reading for 表記, （　） for 文脈規定.
+function renderTargetSentence(el, sentence, target, shown) {
+  const i = sentence.indexOf(target);
+  el.textContent = "";
+  const span = document.createElement("span");
+  span.className = "quiz-target";
+  if (target === "（　）") span.classList.add("blank");
+  span.textContent = shown;
+  el.append(sentence.slice(0, i), span, sentence.slice(i + target.length));
+}
+
 // { version: 1, types: { <quizType>: { <itemKey>: { box, due } } } }
 //
 // Replaces the wrong/not-wrong set this app ran on until 2026-10-16. That set
@@ -1148,11 +1248,21 @@ function renderQuestion() {
     hintEl.textContent = "가타카나 표기를 고르세요";
     choices = shuffle([item.word, ...pickSpellingDistractors(quiz.allItems, item)]);
     answer = item.word;
+  } else if (quiz.type === "vocab" && item.blank) {
+    // もんだい3 文脈規定 (2026-11-05, a photo of the real format: "사진과 같은
+    // 형태의 문제로"). The word is asked in a sentence with a blank, and the
+    // choices are words — so knowing 만나다 is not enough, you have to know
+    // which of あって/あらって/およいで fits after ともだちに. The distractors
+    // are authored per entry, like 청해's, because a random word from the file
+    // too often fits the blank as well.
+    promptEl.classList.add("sentence");
+    renderTargetSentence(promptEl, item.blank, "（　）", "（　　）");
+    hintEl.textContent = "（　）에 들어갈 말을 고르세요";
+    choices = shuffle([item.blankAnswer, ...item.blankWrong]);
+    answer = item.blankAnswer;
   } else if (quiz.type === "vocab") {
-    // The reading used to ride along in the prompt, so the kanji never had to be
-    // read at all. It sits behind a tap now. 19 entries are written in kana only,
-    // where word and reading are the same string — nothing to reveal there, so the
-    // cue line stays off rather than offering a hint that repeats the prompt.
+    // An entry without a blank sentence still works the old way: word in,
+    // Korean meaning out, reading behind a tap.
     promptEl.textContent = item.word;
     hintEl.textContent = "뜻을 고르세요";
     if (item.reading !== item.word) {
@@ -1160,6 +1270,31 @@ function renderQuestion() {
     }
     choices = shuffle([item.meaning, ...pickDistractors(quiz.allItems, item.meaning, "meaning")]);
     answer = item.meaning;
+  } else if (quiz.type === "kanji" && item.sentence) {
+    // もんだい1 漢字読み and もんだい2 表記, from the same photo. One entry, either
+    // direction at random: the underline carries the kanji and you pick its
+    // reading, or it carries the reading and you pick the kanji. Both write to
+    // the one review key, so a word is one record however it was asked.
+    // quiz.modeOverride exists for the tests, which need a known direction.
+    const canWrite = /[\u4E00-\u9FFF]/.test(item.word);
+    quiz.mode = quiz.modeOverride || (canWrite && Math.random() < 0.5 ? "write" : "read");
+    promptEl.classList.add("sentence");
+    if (quiz.mode === "write") {
+      renderTargetSentence(promptEl, item.sentence, item.word, item.reading);
+      hintEl.textContent = "밑줄 친 말을 한자로 어떻게 쓰나요?";
+      choices = shuffle([item.word, ...kanjiLookalikes(item.word, quiz.allItems)]);
+      answer = item.word;
+      // The choices are the thing being read here, and 洗/洋/海 differ by a stroke.
+      quiz.bigChoices = true;
+    } else {
+      renderTargetSentence(promptEl, item.sentence, item.word, item.word);
+      hintEl.textContent = "밑줄 친 말의 읽는 법을 고르세요";
+      choices = shuffle([item.reading, ...kanjiReadingChoices(quiz.allItems, item)]);
+      answer = item.reading;
+    }
+    // The 뜻 is still the one hint, and tapping the sentence opens it. It
+    // answers neither direction: it names the word, not its spelling or sound.
+    wireReveal(meaningEl, "💡 뜻 힌트", `뜻: ${item.meaning}`, { alsoTap: promptEl });
   } else if (quiz.type === "kanji") {
     promptEl.textContent = item.word;
     hintEl.textContent = "읽는 법을 고르세요";
@@ -1207,8 +1342,11 @@ function renderQuestion() {
     speak(item.script);
   }
 
+  quiz.answer = answer;
   const choicesEl = document.getElementById("quiz-choices");
   choicesEl.innerHTML = "";
+  choicesEl.classList.toggle("kanji-choices", !!quiz.bigChoices);
+  quiz.bigChoices = false;
   choices.forEach((choice) => {
     const btn = document.createElement("button");
     btn.className = "choice-btn";
@@ -1237,9 +1375,15 @@ function explanationFor(type, item) {
     case "loanword":
       return `${item.word} = ${item.meaning}`;
     case "vocab":
-      return withRelated(`${item.word} (${item.reading}) = ${item.meaning}`, item.word);
+      return withRelated(
+        [`${item.word} (${item.reading}) = ${item.meaning}`, item.blankKo && `→ ${item.blankKo}`].filter(Boolean).join("\n"),
+        item.word
+      );
     case "kanji":
-      return withRelated(`${item.word} → ${item.reading} (${item.meaning})`, item.word);
+      return withRelated(
+        [`${item.word} → ${item.reading} (${item.meaning})`, item.sentenceKo && `→ ${item.sentenceKo}`].filter(Boolean).join("\n"),
+        item.word
+      );
     case "grammar":
       return item.note || null;
     case "reading":
@@ -1278,8 +1422,13 @@ function answerSpeech(type, item) {
     case "loanword":
       return item.word;
     case "vocab":
+      // The whole sentence with the blank filled: the word heard where it
+      // belongs, which is what the 文脈規定 question was about.
+      return item.blank ? item.blank.replace("（　）", item.blankAnswer) : item.reading;
     case "kanji":
-      return item.reading;
+      // All kana once the word is swapped for its reading, so the voice cannot
+      // misread a neighbouring kanji.
+      return item.sentence ? item.sentence.replace(item.word, item.reading) : item.reading;
     case "grammar":
       // The blank filled in, so the pattern is heard where it attaches rather
       // than as a bare suffix — 접속 is half of what 문법 tests. Both halves need
@@ -1807,6 +1956,9 @@ function kanjiLookalikes(word, pool) {
     const g = _radicalIndex && _radicalIndex.get(chars[i]);
     if (!g) continue;
     for (const sib of g.siblings) {
+      // A sibling already in the word gives 濯濯 for 洗濯 — a doubled
+      // character nobody would write, so it is eliminated unread.
+      if (chars.includes(sib)) continue;
       const variant = [...chars.slice(0, i), sib, ...chars.slice(i + 1)].join("");
       if (variant !== word) out.push(variant);
     }

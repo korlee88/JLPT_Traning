@@ -405,20 +405,23 @@ async function main() {
       await runQuizRound(
         "#start-vocab",
         async () => {
-          // The reading is behind a tap now, so the prompt must be the word alone.
+          // もんだい3 文脈規定: the word's blank sentence, and exactly the entry's
+          // own answer + authored wrong choices — no reading reveal, since the
+          // sentence is all kana and the choices are words, not meanings.
           const item = await page.evaluate(() => quiz.pool[quiz.index]);
           const vocabPrompt = (await page.textContent("#quiz-prompt")).trim();
-          assert(vocabPrompt === item.word, `vocab prompt shows the word alone (got "${vocabPrompt}", expected "${item.word}")`);
-          if (item.reading === item.word) {
-            // Kana-only entry: revealing it would just repeat the prompt.
-            assert(!(await page.isVisible("#quiz-reveal")), `no reading cue for the kana-only entry ${item.word}`);
-          } else {
-            const cue = (await page.textContent("#quiz-reveal")).trim();
-            assert(cue === "글자를 누르면 읽는 법", `vocab quiz shows the reading cue before tapping (got "${cue}")`);
-            await page.click("#quiz-prompt");
-            const shown = (await page.textContent("#quiz-reveal")).trim();
-            assert(shown === item.reading, `tapping the vocab word reveals its reading (got "${shown}", expected "${item.reading}")`);
-          }
+          assert(
+            vocabPrompt === item.blank.replace("（　）", "（　　）"),
+            `vocab prompt is the entry's blank sentence (got "${vocabPrompt}")`
+          );
+          assert(await page.isVisible("#quiz-prompt .quiz-target.blank"), "the vocab blank is marked as the target");
+          assert(!(await page.isVisible("#quiz-reveal")), `no reading cue on a 문맥규정 question (${item.word})`);
+          const shown = await page.$$eval("#quiz-choices .choice-btn", (els) => els.map((e) => e.textContent).sort());
+          const want = [item.blankAnswer, ...item.blankWrong].sort();
+          assert(
+            JSON.stringify(shown) === JSON.stringify(want),
+            `vocab choices are the entry's answer + its three authored wrong words (got ${shown.join(" / ")})`
+          );
         },
         async () => {
         assert(!(await page.isVisible("#quiz-replay")), "replay button stays hidden outside listening mode (vocab)");
@@ -437,7 +440,11 @@ async function main() {
         "#start-kanji",
         async () => {
           const kanjiHint = await page.textContent("#quiz-hint");
-          assert(kanjiHint.includes("읽는 법"), `kanji quiz asks for reading (got "${kanjiHint}")`);
+          const mode = await page.evaluate(() => quiz.mode);
+          assert(
+            kanjiHint.includes(mode === "write" ? "한자로" : "읽는 법"),
+            `kanji quiz says which direction it asks (${mode}: got "${kanjiHint}")`
+          );
 
           // The meaning is a hint now, not part of the prompt — it must not be
           // readable anywhere on screen until the hint line is tapped.
@@ -461,14 +468,21 @@ async function main() {
             `tapping the hint reveals the meaning (got "${meaningShown}", expected "뜻: ${kanjiMeaning}")`
           );
 
-          // Distractors are picked for shape similarity (pickReadingDistractors),
-          // so guard the two ways that can go wrong: a repeated choice when two
-          // entries are homophones, and a choice that isn't a real reading.
+          // 읽기 offers near-miss readings (one mora changed: 장음, 탁점, っ, 요음),
+          // 표기 offers look-alike spellings. Either way: four distinct choices,
+          // the answer among them, and the right script for the direction.
           const choices = await page.$$eval("#quiz-choices .choice-btn", (els) => els.map((e) => e.textContent.trim()));
-          const readings = await page.evaluate(() => quiz.allItems.map((i) => i.reading));
+          const kItem = await page.evaluate(() => quiz.pool[quiz.index]);
+          const kAnswer = await page.evaluate(() => quiz.answer);
           assert(choices.length === 4, `kanji quiz offers 4 choices (got ${choices.length})`);
           assert(new Set(choices).size === 4, `kanji quiz choices are all distinct (got ${choices.join(" / ")})`);
-          assert(choices.every((c) => readings.includes(c)), `every kanji choice is a real reading from the data (got ${choices.join(" / ")})`);
+          assert(choices.includes(kAnswer), `the answer is among the kanji choices (got ${choices.join(" / ")})`);
+          assert(kAnswer === (mode === "write" ? kItem.word : kItem.reading), `the ${mode} answer is the right field`);
+          if (mode === "read") {
+            assert(choices.every((c) => /^[\u3040-\u309F]+$/.test(c)), `읽기 choices are all hiragana (got ${choices.join(" / ")})`);
+          }
+          const target = (await page.textContent("#quiz-prompt .quiz-target")).trim();
+          assert(target === (mode === "write" ? kItem.reading : kItem.word), `the underline carries the ${mode} side (got "${target}")`);
 
           // Tapping the big glyph opens that same 뜻 힌트 — asserted in the
           // block below, on a question whose hint is still closed.
@@ -858,6 +872,7 @@ async function main() {
         const groups = await fetch("data/n4/radical.json").then((r) => r.json());
         const target = quiz.allItems.find((i) => radicalLines(i.word).length > 0);
         quiz.pool[quiz.index] = target;
+        quiz.modeOverride = "read";
         renderQuestion();
         return { groups, word: target.word, reading: target.reading, lines: radicalLines(target.word) };
       });
@@ -878,10 +893,9 @@ async function main() {
       await page.close();
     }
 
-    // --- Peeking at a vocab reading does NOT keep it in the review queue ---
-    // The 단어 quiz asks for the meaning, so the reading is a hint rather than
-    // the answer. No hint in the app costs the review credit any more — the 한자
-    // quiz's reading reveal, the one that did, is gone (see the block below).
+    // --- A right 문맥규정 answer schedules the vocab word ---
+    // The 단어 quiz asks with a blank sentence now; the answer is the inflected
+    // word that fills it, and getting it right has to move the word up a box.
     {
       const page = await browser.newPage();
       await page.goto(URL, { waitUntil: "networkidle" });
@@ -890,26 +904,15 @@ async function main() {
       await page.click('.tab-btn[data-tab="quiz"]');
       await page.click("#start-vocab");
       await page.waitForSelector("#quiz-choices .choice-btn");
-
-      // Skip to a question that actually has a reading to reveal.
-      let item = await page.evaluate(() => quiz.pool[quiz.index]);
-      while (item.reading === item.word) {
-        await page.locator("#quiz-choices .choice-btn").first().click();
-        await page.click("#quiz-next");
-        await page.waitForSelector("#quiz-choices .choice-btn");
-        item = await page.evaluate(() => quiz.pool[quiz.index]);
-      }
-      await page.click("#quiz-prompt");
-      // Asserted here as well as in the round above, because which entry the round
-      // draws first is random and may be a kana-only one with no reading to show.
-      const vocabShown = (await page.textContent("#quiz-reveal")).trim();
-      assert(vocabShown === item.reading, `vocab reading reveals on tap (got "${vocabShown}", expected "${item.reading}")`);
-      await clickChoice(page, item.meaning);
+      const item = await page.evaluate(() => quiz.pool[quiz.index]);
+      await clickChoice(page, item.blankAnswer);
       const vocabBox = await boxOf(page, "vocab", item.word);
       assert(
         vocabBox !== null && vocabBox > 0,
-        `a peeked vocab reading still counts as recall when answered right (${item.word} is in box ${vocabBox}, expected above 0)`
+        `a right blank answer counts as recall (${item.word} is in box ${vocabBox}, expected above 0)`
       );
+      const note = await page.textContent("#quiz-note");
+      assert(note.includes(item.blankKo), `the vocab note carries the sentence's Korean (got "${note}")`);
       await page.close();
     }
 
@@ -927,7 +930,11 @@ async function main() {
       await page.click("#start-kanji");
       await page.waitForSelector("#quiz-choices .choice-btn");
 
-      const item = await page.evaluate(() => quiz.pool[quiz.index]);
+      const item = await page.evaluate(() => {
+        quiz.modeOverride = "read";
+        renderQuestion();
+        return quiz.pool[quiz.index];
+      });
       await page.click("#quiz-prompt");
       const hinted = (await page.textContent("#quiz-meaning")).trim();
       assert(
@@ -953,6 +960,31 @@ async function main() {
         box !== null && box > 0,
         `using the 뜻 힌트 still counts as recall when answered right (${item.word} is in box ${box}, expected above 0)`
       );
+
+      // 표기 is the mirror case: the reading is the question there, and it is the
+      // kanji spelling that must not be on the card above the choices.
+      await page.click("#quiz-next");
+      await page.waitForSelector("#quiz-choices .choice-btn");
+      const w = await page.evaluate(() => {
+        quiz.modeOverride = "write";
+        renderQuestion();
+        return quiz.pool[quiz.index];
+      });
+      await page.click("#quiz-prompt");
+      const aboveW = await page.evaluate(() =>
+        ["quiz-prompt", "quiz-reveal", "quiz-meaning", "quiz-hint", "quiz-hint-ko"]
+          .map((id) => document.getElementById(id))
+          .filter((el) => el && !el.hidden)
+          .map((el) => el.textContent)
+          .join(" | ")
+      );
+      assert(
+        !aboveW.includes(w.word) && aboveW.includes(w.reading),
+        `the 표기 question shows the reading, never the kanji (${w.word}; card reads "${aboveW}")`
+      );
+      await clickChoice(page, w.word);
+      const wBox = await boxOf(page, "kanji", w.word);
+      assert(wBox !== null && wBox > 0, `a right 표기 answer schedules the same review key (${w.word} box ${wBox})`);
       await page.close();
     }
 
@@ -2129,34 +2161,107 @@ async function main() {
       await page.close();
     }
 
+    // --- 문자·어휘 sentences: the data behind もんだい1·2·3 (2026-11-05) ---
+    // Every 한자 entry carries one sentence with the word in it exactly once and
+    // nothing else in kanji (the rest is kana, so the underlined word is the only
+    // thing being read); every 단어 entry carries a blank sentence with an
+    // authored answer and three wrong words. Both carry their Korean.
+    {
+      const kanji = JSON.parse(fs.readFileSync(path.join(ROOT, "data/n4/kanji.json"), "utf8"));
+      const vocab = JSON.parse(fs.readFileSync(path.join(ROOT, "data/n4/vocab.json"), "utf8"));
+      const KANJI = /[\u4E00-\u9FFF々]/;
+      const KANA = /[\u3040-\u30FF]/;
+      const bad = [];
+      for (const k of kanji) {
+        const s = k.sentence || "";
+        if (s.split(k.word).length !== 2) bad.push(`${k.word}: word not in its sentence exactly once`);
+        else if (KANJI.test(s.replace(k.word, ""))) bad.push(`${k.word}: kanji outside the target`);
+        if (/[A-Za-z0-9]/.test(s)) bad.push(`${k.word}: Latin or digit in the sentence`);
+        if (!k.sentenceKo || KANA.test(k.sentenceKo)) bad.push(`${k.word}: sentenceKo missing or has kana`);
+      }
+      for (const v of vocab) {
+        const s = v.blank || "";
+        if (s.split("（　）").length !== 2) bad.push(`${v.word}: blank sentence needs exactly one （　）`);
+        const opts = [v.blankAnswer, ...(v.blankWrong || [])];
+        if (opts.length !== 4 || new Set(opts).size !== 4 || opts.some((o) => !o)) bad.push(`${v.word}: needs 4 distinct choices`);
+        if (KANJI.test(s + opts.join(""))) bad.push(`${v.word}: kanji in a kana-only blank question`);
+        if (!v.blankKo || KANA.test(v.blankKo)) bad.push(`${v.word}: blankKo missing or has kana`);
+      }
+      if (new Set(kanji.map((k) => k.sentence)).size !== kanji.length) bad.push("two 한자 entries share a sentence");
+      if (new Set(vocab.map((v) => v.blank)).size !== vocab.length) bad.push("two 단어 entries share a blank sentence");
+      assert(bad.length === 0, `문자·어휘 sentence data is well-formed (${bad.slice(0, 5).join("; ")})`);
+
+      // The near-miss readings: never the answer, never repeated, and never a
+      // change to kana the question prints (okurigana, a leading お, the ご of
+      // 昼ご飯) — that would be eliminated without reading the kanji.
+      const page = await browser.newPage();
+      await page.goto(URL, { waitUntil: "networkidle" });
+      const probe = await page.evaluate(async () => {
+        const items = await levelJson("kanji");
+        const out = { broken: [], near: 0 };
+        for (const it of items) {
+          const near = readingVariants(it.word, it.reading);
+          if (near.length >= 3) out.near++;
+          const kana = it.word.replace(/[\u4E00-\u9FFF]+/g, "|").split("|").filter(Boolean);
+          for (const v of near) {
+            if (v === it.reading || kana.some((k) => !v.includes(k))) out.broken.push(`${it.word}: ${v}`);
+          }
+          const all = kanjiReadingChoices(items, it);
+          if (all.length !== 3 || new Set([it.reading, ...all]).size !== 4) out.broken.push(`${it.word}: choices ${all}`);
+        }
+        out.total = items.length;
+        return out;
+      });
+      const doubled = await page.evaluate(async () => {
+        const items = await levelJson("kanji");
+        await buildRadicalIndex();
+        return items.flatMap((it) =>
+          kanjiLookalikes(it.word, items)
+            .filter((w) => /([\u4E00-\u9FFF])\1/.test(w) && !/([\u4E00-\u9FFF])\1/.test(it.word))
+            .map((w) => `${it.word}→${w}`)
+        );
+      });
+      assert(doubled.length === 0, `표기 look-alikes never double a character (got ${doubled.slice(0, 5).join(", ")})`);
+      assert(probe.broken.length === 0, `near-miss readings are sound (${probe.broken.slice(0, 5).join("; ")})`);
+      // Measured at 157 of 278 when it shipped; the rest are short words (目, 花)
+      // topped up from other readings. A drop means the generator broke.
+      assert(probe.near >= 140, `most 한자 words get three near-miss readings (got ${probe.near} of ${probe.total})`);
+      await page.close();
+    }
+
     // --- 문법 renders at its own size, not the single-kanji 2.6rem ---
     // Its sentences carry furigana as 漢字（かな）, which roughly doubles the
     // character count; at 2.6rem one ran over three lines on a phone.
     {
       // One page each: #quiz-retry only exists on the result screen, so you can't
       // switch quiz type mid-round.
-      const promptSize = async (type) => {
+      const promptSize = async (type, sel = "#quiz-prompt") => {
         const page = await browser.newPage({ viewport: PHONE });
         await page.goto(URL, { waitUntil: "networkidle" });
         await page.click('.tab-btn[data-tab="quiz"]');
         await page.click(`#start-${type}`);
         await page.waitForSelector("#quiz-choices .choice-btn");
         const px = await page.evaluate(
-          () => parseFloat(getComputedStyle(document.getElementById("quiz-prompt")).fontSize)
+          (q) => parseFloat(getComputedStyle(document.querySelector(q)).fontSize),
+          sel
         );
         await page.close();
         return px;
       };
       const grammarPx = await promptSize("grammar");
-      const kanjiPx = await promptSize("kanji");
+      // 한자 is sentence-shaped now (もんだい1·2); the stroke-legibility size moved
+      // to the underlined word itself, which is the only part being read.
+      const kanjiPx = await promptSize("kanji", "#quiz-prompt .quiz-target");
+      // 가나 is the single-glyph prompt that still uses the full 2.6rem.
+      const kanaPx = await promptSize("hiragana");
       assert(
-        grammarPx < kanjiPx / 2,
-        `the 문법 sentence is less than half the single-kanji prompt (${grammarPx}px vs ${kanjiPx}px)`
+        grammarPx < kanaPx / 2,
+        `the 문법 sentence is less than half the single-glyph prompt (${grammarPx}px vs ${kanaPx}px)`
       );
-      // the class must be cleared again, or 한자 would inherit the small size
+      assert(kanaPx > 40, `가나 keeps the oversized single-glyph prompt (${kanaPx}px)`);
       assert(
-        kanjiPx > 40,
-        `한자 keeps the oversized prompt so strokes stay legible (${kanjiPx}px)`
+        kanjiPx > 28,
+        `the underlined 한자 stays large so strokes stay legible (${kanjiPx}px)`
       );
     }
 
@@ -2170,8 +2275,10 @@ async function main() {
         hiragana: (i) => i.char,
         katakana: (i) => i.char,
         loanword: (i) => i.word,
-        vocab: (i) => i.reading,
-        kanji: (i) => i.reading,
+        // 문자·어휘 speak the whole sentence, in kana: the word heard in the
+        // context it was asked in (2026-11-05).
+        vocab: (i) => i.blank.replace("（　）", i.blankAnswer),
+        kanji: (i) => i.sentence.replace(i.word, i.reading),
         reading: (i) => i.answer,
       };
       for (const [type, expected] of Object.entries(EXPECT)) {
@@ -2354,6 +2461,10 @@ async function main() {
       { type: "reading", file: "reading.json", keyField: "passage", answerField: "answer" },
       { type: "listening", file: "listening.json", keyField: "script", answerField: "meaning" },
       { type: "grammar", file: "grammar.json", keyField: "sentence", answerField: "answer" },
+      // 문자·어휘 went sentence-shaped on 2026-11-05: every entry now renders a
+      // sentence plus a note with its Korean, so they get the same walk.
+      { type: "kanji", file: "kanji.json", keyField: "word" },
+      { type: "vocab", file: "vocab.json", keyField: "word" },
     ]) {
       const page = await browser.newPage({ viewport: PHONE });
       await page.goto(URL, { waitUntil: "networkidle" });
@@ -2371,7 +2482,7 @@ async function main() {
       const offScreen = [];
       for (let i = 0; i < total; i++) {
         await page.waitForSelector("#quiz-choices .choice-btn");
-        const answer = await page.evaluate((f) => quiz.pool[quiz.index][f], answerField);
+        const answer = await page.evaluate(() => quiz.answer);
         await clickChoice(page, answer);
         if (!(await nextButtonOnScreen(page))) {
           offScreen.push(await page.evaluate((f) => quiz.pool[quiz.index][f].slice(0, 20), keyField));
@@ -2587,7 +2698,7 @@ async function main() {
       // while the words stay scheduled.
       for (let i = 0; i < pool.words.length; i++) {
         await page.waitForSelector("#quiz-choices .choice-btn");
-        const want = await page.evaluate(() => quiz.pool[quiz.index].meaning);
+        const want = await page.evaluate(() => quiz.answer);
         await clickChoice(page, want);
         await page.click("#quiz-next");
       }
