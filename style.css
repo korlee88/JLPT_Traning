@@ -363,3 +363,14 @@ main {
 .write-quit { width: 100%; margin-top: 8px; }
 .write-answer-char { font-size: 3.2rem; text-align: center; margin: 12px 0 4px; line-height: 1.1; }
 .write-answer-meaning { color: var(--muted); font-size: 0.9rem; text-align: center; margin: 0 0 12px; line-height: 1.6; }
+
+/* もんだい4 underline (the whole sentence, at sentence size) and full-sentence
+   choices for 유의어/용법 (2026-11-06). */
+.quiz-under { text-decoration: underline; text-underline-offset: 5px; }
+.quiz-choices.sentence-choices .choice-btn { text-align: left; font-size: 1rem; line-height: 1.5; }
+/* 오답 통계 */
+.wrong-stats { margin-top: 12px; }
+.wrong-stats summary { cursor: pointer; font-weight: 600; }
+.stats-types, .stats-list { margin: 8px 0; padding-left: 18px; font-size: 0.9rem; }
+.stats-head { margin: 8px 0 4px; font-size: 0.9rem; color: var(--muted, #666); }
+.stats-drills { display: flex; flex-wrap: wrap; gap: 6px; }
