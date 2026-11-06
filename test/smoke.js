@@ -253,8 +253,10 @@ async function main() {
         "#start-hiragana": 15,
         "#start-katakana": 15,
         "#start-loanword": 5,
-        "#start-kanji": 5,
-        "#start-vocab": 5,
+        "#start-kanji": 10,
+        "#start-vocab": 10,
+        "#start-synonym": 10,
+        "#start-usage": 10,
         "#start-grammar": 5,
         "#start-reading": 5,
         "#start-listening": 5,
@@ -2310,6 +2312,62 @@ async function main() {
       await page.close();
     }
 
+    // --- 유의어 (もんだい4) and 용법 (もんだい5) quiz files, 2026-11-06 ---
+    {
+      const RUBY_RE = /([\u4E00-\u9FFF]+)（([\u3040-\u309F]+)）/gu;
+      const bare = (t) => /[\u4E00-\u9FFF々]/.test(t.replace(RUBY_RE, ""));
+      const bad = [];
+      const syn = JSON.parse(fs.readFileSync(path.join(ROOT, "data/n4/synonym.json"), "utf8"));
+      const use = JSON.parse(fs.readFileSync(path.join(ROOT, "data/n4/usage.json"), "utf8"));
+      for (const e of syn) {
+        if (e.choices.length !== 4 || new Set(e.choices).size !== 4 || !e.choices.includes(e.answer)) bad.push(`syn ${e.sentence}: choices`);
+        if (e.choices.includes(e.sentence)) bad.push(`syn ${e.sentence}: the prompt is one of its own choices`);
+        if (!e.pair || !e.pair.includes("≒")) bad.push(`syn ${e.sentence}: pair`);
+        if ([e.sentence, ...e.choices].some(bare)) bad.push(`syn ${e.sentence}: kanji without furigana`);
+      }
+      for (const e of use) {
+        if (e.choices.length !== 4 || new Set(e.choices).size !== 4 || !e.choices.includes(e.answer)) bad.push(`use ${e.word}: choices`);
+        if (!e.ko || /[\u3040-\u30FF]/.test(e.ko)) bad.push(`use ${e.word}: ko`);
+        if ([e.word, ...e.choices].some(bare)) bad.push(`use ${e.word}: kanji without furigana`);
+      }
+      if (new Set(syn.map((e) => e.sentence)).size !== syn.length) bad.push("duplicate synonym sentence");
+      if (new Set(use.map((e) => e.word)).size !== use.length) bad.push("duplicate usage word");
+      assert(bad.length === 0, `유의어/용법 data is well-formed (${bad.slice(0, 4).join("; ")})`);
+      assert(syn.length >= 100 && use.length >= 40, `유의어 ${syn.length}, 용법 ${use.length} entries`);
+    }
+
+    // --- 오답 통계: counts per item, a list of repeat misses, and a drill ---
+    {
+      const page = await browser.newPage({ viewport: PHONE });
+      await page.goto(URL, { waitUntil: "networkidle" });
+      await page.evaluate(() => localStorage.clear());
+      await page.reload({ waitUntil: "networkidle" });
+      const rec = await page.evaluate(() => {
+        recordAnswerOutcome("usage", "浅（あさ）い", false);
+        recordAnswerOutcome("usage", "浅（あさ）い", true);
+        recordAnswerOutcome("usage", "浅（あさ）い", false);
+        recordAnswerOutcome("usage", "音（おと）", false);
+        return loadReview().types.usage;
+      });
+      const a = rec["浅（あさ）い"];
+      assert(a.n === 3 && a.miss === 2 && a.box === 0 && a.lastMiss, `an item counts asks and misses (got ${JSON.stringify(a)})`);
+      await page.click('.tab-btn[data-tab="quiz"]');
+      await page.waitForSelector("#wrong-stats:not([hidden])");
+      const body = await page.textContent("#wrong-stats-body");
+      assert(body.includes("용법 — 푼 횟수 4 · 틀림 3 · 정답률 25%"), `the stats line totals the type (got "${body.slice(0, 80)}")`);
+      const listed = await page.$$eval(".stats-list li", (els) => els.map((e) => e.textContent));
+      assert(
+        listed.length === 1 && listed[0].includes("浅（あさ）い") && listed[0].includes("2/3번 틀림"),
+        `only items missed twice or more are listed (got ${JSON.stringify(listed)})`
+      );
+      await page.evaluate(() => (document.getElementById("wrong-stats").open = true));
+      await page.click(".stats-drill");
+      await page.waitForSelector("#quiz-choices .choice-btn");
+      const pool = await page.evaluate(() => quiz.pool.map((v) => v.word));
+      assert(pool.length === 1 && pool[0] === "浅（あさ）い", `the drill asks exactly the repeat misses (got ${pool})`);
+      await page.close();
+    }
+
     // --- 문법 renders at its own size, not the single-kanji 2.6rem ---
     // Its sentences carry furigana as 漢字（かな）, which roughly doubles the
     // character count; at 2.6rem one ran over three lines on a phone.
@@ -2638,7 +2696,7 @@ async function main() {
 
       const summaries = await page.$$eval(".wrong-name", (els) => els.map((e) => e.textContent));
       assert(
-        summaries.join(" | ") === "단어 오늘 2개 | 한자 오늘 12개",
+        summaries.join(" | ") === "한자 읽기·표기 오늘 12개 | 문맥규정 오늘 2개",
         `the note groups by type in the quiz buttons' order (got "${summaries.join(" | ")}")`
       );
       const totalBadge = (await page.textContent("#wrong-total")).trim();
@@ -2676,7 +2734,7 @@ async function main() {
       );
       const subs = await page.$$eval(".wrong-sub", (els) => els.map((e) => e.textContent));
       assert(
-        subs.join(" | ") === "외우는 중 2개 · 외움 0개 | 외우는 중 12개 · 외움 0개",
+        subs.join(" | ") === "외우는 중 12개 · 외움 0개 | 외우는 중 2개 · 외움 0개",
         `each card says how far along that type is (got "${subs.join(" | ")}")`
       );
 
@@ -2707,7 +2765,7 @@ async function main() {
 
       const drillLabels = await page.$$eval(".wrong-drill", (els) => els.map((e) => e.textContent));
       assert(
-        drillLabels.join(" | ") === "오늘 복습 (2문제) | 오늘 복습 (5문제)",
+        drillLabels.join(" | ") === "오늘 복습 (10문제) | 오늘 복습 (2문제)",
         `the drill button says how long the round will be, capped at the round size (got "${drillLabels.join(" | ")}")`
       );
       await page.close();

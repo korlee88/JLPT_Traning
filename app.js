@@ -39,8 +39,11 @@ const QUIZ_TYPE_LABELS = {
   hiragana: "히라가나 쪽지시험",
   katakana: "가타카나 쪽지시험",
   loanword: "외래어 쪽지시험",
-  vocab: "단어 쪽지시험",
-  kanji: "한자 쪽지시험",
+  // 문자·어휘 in the paper's もんだい order (2026-11-06): 1·2, 3, 4, 5.
+  kanji: "한자 읽기·표기 쪽지시험",
+  vocab: "문맥규정 쪽지시험",
+  synonym: "유의어 쪽지시험",
+  usage: "용법 쪽지시험",
   grammar: "문법 쪽지시험",
   reading: "독해 쪽지시험",
   listening: "청해 쪽지시험",
@@ -54,6 +57,8 @@ const QUIZ_KEY_FIELD = {
   loanword: "word",
   vocab: "word",
   kanji: "word",
+  synonym: "sentence",
+  usage: "word",
   grammar: "sentence",
   reading: "passage",
   listening: "script",
@@ -81,7 +86,10 @@ const MASTERED_BOX = REVIEW_INTERVALS.length - 1;
 // so fifteen take about as long as five of anything else, and the chart is a
 // closed set of 104 where more sightings per sitting is the point.
 const DEFAULT_ROUND_SIZE = 5;
-const QUIZ_ROUND_SIZE = { hiragana: 15, katakana: 15 };
+//
+// 문자·어휘 went to 10 on 2026-11-06 ("문제1~5의 형태 쪽지시험 10문제씩으로"),
+// alongside the two new もんだい4·5 quiz types.
+const QUIZ_ROUND_SIZE = { hiragana: 15, katakana: 15, kanji: 10, vocab: 10, synonym: 10, usage: 10 };
 
 function roundSizeFor(type) {
   return QUIZ_ROUND_SIZE[type] || DEFAULT_ROUND_SIZE;
@@ -341,6 +349,8 @@ function setupQuiz() {
   document.getElementById("start-loanword").addEventListener("click", () => startQuiz("loanword"));
   document.getElementById("start-vocab").addEventListener("click", () => startQuiz("vocab"));
   document.getElementById("start-kanji").addEventListener("click", () => startQuiz("kanji"));
+  document.getElementById("start-synonym").addEventListener("click", () => startQuiz("synonym"));
+  document.getElementById("start-usage").addEventListener("click", () => startQuiz("usage"));
   document.getElementById("start-grammar").addEventListener("click", () => startQuiz("grammar"));
   document.getElementById("start-reading").addEventListener("click", () => startQuiz("reading"));
   document.getElementById("start-listening").addEventListener("click", () => startQuiz("listening"));
@@ -466,6 +476,7 @@ async function renderWrongNote() {
   let learningAll = 0;
   let masteredAll = 0;
   let pruned = false;
+  const stats = [];
 
   // Object.keys(QUIZ_TYPE_LABELS) rather than the store's own key order, so the
   // groups come out in the same order as the quiz buttons above them.
@@ -488,6 +499,14 @@ async function renderWrongNote() {
     const keys = Object.keys(schedule);
     if (!keys.length) continue;
 
+    stats.push({
+      type,
+      n: keys.reduce((a, k) => a + (schedule[k].n || 0), 0),
+      miss: keys.reduce((a, k) => a + (schedule[k].miss || 0), 0),
+      missed: keys
+        .filter((k) => (schedule[k].miss || 0) >= 2)
+        .map((k) => ({ key: k, item: byKey.get(k), ...schedule[k] })),
+    });
     const due = dueKeys(schedule, today);
     const mastered = keys.filter((k) => schedule[k].box >= MASTERED_BOX).length;
     const learning = keys.length - mastered;
@@ -551,6 +570,66 @@ async function renderWrongNote() {
   progressEl.textContent = `외우는 중 ${learningAll}개 · 외움 ${masteredAll}개`;
   progressEl.hidden = learningAll + masteredAll === 0;
   emptyEl.hidden = groupsEl.children.length > 0;
+  renderWrongStats(stats);
+}
+
+// 오답 통계: per type, how many answers and how many misses; then every item
+// missed twice or more, worst first, with a drill per type. Counting started on
+// 2026-11-06 — entries scheduled before then carry no counts and simply do not
+// appear until they are answered again.
+const STATS_REPEAT = 2;
+const STATS_LIST_MAX = 30;
+function renderWrongStats(stats) {
+  const box = document.getElementById("wrong-stats");
+  const body = document.getElementById("wrong-stats-body");
+  body.innerHTML = "";
+  const counted = stats.filter((s) => s.n > 0);
+  box.hidden = !counted.length;
+  if (!counted.length) return;
+
+  const table = document.createElement("ul");
+  table.className = "stats-types";
+  for (const s of counted) {
+    const li = document.createElement("li");
+    const rate = Math.round(((s.n - s.miss) / s.n) * 100);
+    li.textContent = `${shortTypeLabel(s.type)} — 푼 횟수 ${s.n} · 틀림 ${s.miss} · 정답률 ${rate}%`;
+    table.append(li);
+  }
+  body.append(table);
+
+  const all = counted
+    .flatMap((s) => s.missed.map((m) => ({ ...m, type: s.type })))
+    .sort((a, b) => b.miss - a.miss || b.miss / b.n - a.miss / a.n);
+  const head = document.createElement("p");
+  head.className = "stats-head";
+  head.textContent = all.length
+    ? `${STATS_REPEAT}번 이상 틀린 문제 ${all.length}개`
+    : `아직 ${STATS_REPEAT}번 이상 틀린 문제는 없습니다.`;
+  body.append(head);
+  if (!all.length) return;
+
+  const list = document.createElement("ul");
+  list.className = "stats-list";
+  list.lang = "ja";
+  for (const m of all.slice(0, STATS_LIST_MAX)) {
+    const li = document.createElement("li");
+    li.textContent = `[${shortTypeLabel(m.type)}] ${reviewLine(m.type, m.item)} — ${m.miss}/${m.n}번 틀림`;
+    list.append(li);
+  }
+  body.append(list);
+
+  const drills = document.createElement("div");
+  drills.className = "stats-drills";
+  for (const s of counted.filter((x) => x.missed.length)) {
+    const btn = document.createElement("button");
+    btn.className = "btn stats-drill";
+    btn.dataset.type = s.type;
+    const keys = s.missed.sort((a, b) => b.miss - a.miss).map((m) => m.key);
+    btn.textContent = `${shortTypeLabel(s.type)} 자주 틀린 ${Math.min(keys.length, roundSizeFor(s.type))}문제 풀기`;
+    btn.addEventListener("click", () => startQuiz(s.type, { focusKeys: keys.slice(0, roundSizeFor(s.type)) }));
+    drills.append(btn);
+  }
+  body.append(drills);
 }
 
 // Deduped by value, not just filtered against the answer. Entries can legitimately
@@ -818,7 +897,15 @@ function recordAnswerOutcome(type, itemKey, correct) {
   const forType = (store.types[type] = store.types[type] || {});
   const prev = forType[itemKey];
   const box = correct ? Math.min((prev ? prev.box : 0) + 1, MASTERED_BOX) : 0;
-  forType[itemKey] = { box, due: addDays(todayStr(), REVIEW_INTERVALS[box]) };
+  // n/miss/lastMiss feed the 오답 통계 (2026-11-06, "반복해서 틀리는 문제가 뭔지
+  // 확인해서 공부하겠음"). The box alone cannot say it: a miss resets it to 0,
+  // so a word missed five times looks the same as one missed once.
+  const entry = { box, due: addDays(todayStr(), REVIEW_INTERVALS[box]) };
+  entry.n = ((prev && prev.n) || 0) + 1;
+  entry.miss = ((prev && prev.miss) || 0) + (correct ? 0 : 1);
+  if (!correct) entry.lastMiss = todayStr();
+  else if (prev && prev.lastMiss) entry.lastMiss = prev.lastMiss;
+  forType[itemKey] = entry;
   saveReview(store);
 }
 
@@ -1039,7 +1126,7 @@ function relatedWordLines(word) {
 // today — still capped at the type's round length, since the point of it is a
 // short targeted session. A normal round mixes review with fresh material
 // instead (buildQuizPool).
-async function startQuiz(type, { wrongOnly = false } = {}) {
+async function startQuiz(type, { wrongOnly = false, focusKeys = null } = {}) {
   const items = await levelJson(type);
   if (XREF_TYPES.includes(type)) await Promise.all([buildXrefIndex(), buildRadicalIndex()]);
   // 독해/문법 don't use the cross-reference note, but their tapped words show a
@@ -1051,8 +1138,13 @@ async function startQuiz(type, { wrongOnly = false } = {}) {
   const keyField = QUIZ_KEY_FIELD[type];
   const schedule = loadReview().types[type] || {};
   const roundSize = roundSizeFor(type);
-  quiz.wrongOnly = wrongOnly;
-  if (wrongOnly) {
+  quiz.wrongOnly = wrongOnly || !!focusKeys;
+  if (focusKeys) {
+    // 자주 틀린 문제 drill: the items the 오답 통계 lists, whatever their due date.
+    const want = new Set(focusKeys);
+    quiz.pool = shuffle(items.filter((v) => want.has(v[keyField]))).slice(0, roundSize);
+    if (!quiz.pool.length) return;
+  } else if (wrongOnly) {
     const queued = new Set(dueKeys(schedule));
     const only = items.filter((v) => queued.has(v[keyField]));
     // Cleared between opening the note and tapping the button: nothing to drill,
@@ -1270,6 +1362,26 @@ function renderQuestion() {
     }
     choices = shuffle([item.meaning, ...pickDistractors(quiz.allItems, item.meaning, "meaning")]);
     answer = item.meaning;
+  } else if (quiz.type === "synonym") {
+    // もんだい4 言い換え類義: the whole sentence is underlined on the paper, and the
+    // four choices are full sentences — only the paraphrased part differs.
+    promptEl.classList.add("sentence");
+    promptEl.textContent = "";
+    const under = document.createElement("span");
+    under.className = "quiz-under";
+    under.textContent = item.sentence;
+    promptEl.append(under);
+    hintEl.textContent = "밑줄 친 문장과 거의 같은 뜻의 문장을 고르세요";
+    quiz.stackedChoices = true;
+    choices = shuffle(item.choices);
+    answer = item.answer;
+  } else if (quiz.type === "usage") {
+    // もんだい5 用法: one word, four sentences, and only one uses it rightly.
+    promptEl.textContent = item.word;
+    hintEl.textContent = "이 말을 바르게 쓴 문장을 고르세요";
+    quiz.stackedChoices = true;
+    choices = shuffle(item.choices);
+    answer = item.answer;
   } else if (quiz.type === "kanji" && item.sentence) {
     // もんだい1 漢字読み and もんだい2 表記, from the same photo. One entry, either
     // direction at random: the underline carries the kanji and you pick its
@@ -1363,7 +1475,9 @@ function renderQuestion() {
   const choicesEl = document.getElementById("quiz-choices");
   choicesEl.innerHTML = "";
   choicesEl.classList.toggle("kanji-choices", !!quiz.bigChoices);
+  choicesEl.classList.toggle("sentence-choices", !!quiz.stackedChoices);
   quiz.bigChoices = false;
+  quiz.stackedChoices = false;
   choices.forEach((choice) => {
     const btn = document.createElement("button");
     btn.className = "choice-btn";
@@ -1401,6 +1515,10 @@ function explanationFor(type, item) {
         [`${item.word} → ${item.reading} (${item.meaning})`, item.sentenceKo && `→ ${item.sentenceKo}`].filter(Boolean).join("\n"),
         item.word
       );
+    case "synonym":
+      return `${item.pair}\n→ ${item.meaning}`;
+    case "usage":
+      return `${item.word} = ${item.meaning}\n바른 문장: ${item.answer}\n→ ${item.ko}`;
     case "grammar":
       // A ★ question shows the order first: which part went where is the
       // thing that was asked, and the note then explains the grammar point.
@@ -1464,6 +1582,10 @@ function answerSpeech(type, item) {
       return stripRuby(item.sentence).replace("＿＿＿", stripRuby(item.answer));
     case "reading":
       return item.answer;
+    case "synonym":
+      return stripRuby(item.sentence);
+    case "usage":
+      return stripRuby(item.answer);
     default:
       return null;
   }
