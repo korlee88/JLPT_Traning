@@ -184,6 +184,11 @@ main {
 .choice-btn.correct { background: var(--good); color: #fff; border-color: var(--good); }
 .choice-btn.wrong { background: var(--bad); color: #fff; border-color: var(--bad); }
 .choice-btn:disabled { cursor: default; }
+/* 문맥규정's post-answer translation, right-aligned beside the word. The word
+   keeps its own size; the gloss is a size down so it reads as a caption, and
+   inherits the button colour so it stays legible on the green/red fills. */
+.choice-btn.has-gloss { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.choice-gloss { font-size: 0.85rem; opacity: 0.85; text-align: right; }
 
 /* Secondary on purpose: it sits one tap away from 다음, and two identical accent
    buttons stacked on a phone is a mis-tap waiting to happen. No display rule, so

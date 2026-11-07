@@ -1072,6 +1072,84 @@ async function main() {
       await page.close();
     }
 
+    // --- 문맥규정 shows each choice's Korean meaning on the right, after answering ---
+    // 2026-11-07, "선택지들 오른쪽에 해당번호의 번역": the wrong words are the ones
+    // nobody looks up, and what a distractor means is half of what the question
+    // teaches. choicegloss.json holds only what vocab.json cannot supply (inflected
+    // forms, words with no entry); every other choice is a plain vocab word and its
+    // meaning comes from there, so the check below walks the whole file in both
+    // directions the way gloss.json's does.
+    {
+      const vocab = JSON.parse(fs.readFileSync(path.join(ROOT, "data/n4/vocab.json"), "utf8"));
+      const authored = JSON.parse(fs.readFileSync(path.join(ROOT, "data/n4/choicegloss.json"), "utf8"));
+      const fromVocab = new Map();
+      for (const e of vocab) {
+        if (!fromVocab.has(e.reading)) fromVocab.set(e.reading, e.meaning);
+        if (!fromVocab.has(e.word)) fromVocab.set(e.word, e.meaning);
+      }
+      const expectedGloss = (c) => authored[c] || fromVocab.get(c);
+      const allChoices = new Set(vocab.flatMap((e) => [e.blankAnswer, ...e.blankWrong]));
+      const unglossed = [...allChoices].filter((c) => !expectedGloss(c));
+      assert(
+        unglossed.length === 0,
+        `every 문맥규정 choice has a translation (${unglossed.length} missing: ${unglossed.slice(0, 5).join(" ")})`
+      );
+      const dead = Object.keys(authored).filter((k) => !allChoices.has(k) || fromVocab.has(k));
+      assert(
+        dead.length === 0,
+        `choicegloss.json holds only choices that appear and that vocab.json cannot supply (${dead.length} stray: ${dead.slice(0, 5).join(" ")})`
+      );
+      const blank = Object.entries(authored).filter(([, v]) => !v || !v.trim() || /[\u3040-\u30FF\u4E00-\u9FFF]/.test(v));
+      assert(blank.length === 0, `no gloss is empty or left in Japanese (${blank.slice(0, 3).map(([k]) => k).join(" ")})`);
+
+      const page = await browser.newPage({ viewport: PHONE });
+      await page.goto(URL, { waitUntil: "networkidle" });
+      await page.click('.tab-btn[data-tab="quiz"]');
+      await page.click("#start-vocab");
+      await page.waitForSelector("#quiz-choices .choice-btn");
+      for (let n = 0; n < 4; n++) {
+        const item = await page.evaluate(() => quiz.pool[quiz.index]);
+        assert(
+          (await page.locator(".choice-gloss").count()) === 0,
+          `no translation beside the choices while the question is open (${item.word})`
+        );
+        // Alternate a right and a wrong pick: the right button is still found by
+        // its text after the gloss is added, so a wrong pick must light it green.
+        const pick = n % 2 === 0 ? item.blankAnswer : item.blankWrong[0];
+        await clickChoice(page, pick);
+        const rows = await page.$$eval("#quiz-choices .choice-btn", (els) =>
+          els.map((b) => ({
+            choice: b.dataset.choice,
+            cls: b.className,
+            gloss: (b.querySelector(".choice-gloss") || {}).textContent || null,
+            glossRight: b.querySelector(".choice-gloss") ? b.querySelector(".choice-gloss").getBoundingClientRect().right : null,
+            btnRight: b.getBoundingClientRect().right,
+            glossLeft: b.querySelector(".choice-gloss") ? b.querySelector(".choice-gloss").getBoundingClientRect().left : null,
+            textRight: (() => {
+              const r = document.createRange();
+              r.selectNodeContents(b.firstChild);
+              return r.getBoundingClientRect().right;
+            })(),
+          }))
+        );
+        assert(rows.length === 4, "four choices after answering");
+        for (const r of rows) {
+          assert(r.gloss === expectedGloss(r.choice), `"${r.choice}" shows "${expectedGloss(r.choice)}" (got "${r.gloss}")`);
+          assert(r.btnRight - r.glossRight < 20, `the translation sits at the right edge of "${r.choice}"'s button`);
+          assert(r.glossLeft >= r.textRight, `the translation is beside "${r.choice}", not over it`);
+        }
+        const green = rows.filter((r) => r.cls.includes("correct")).map((r) => r.choice);
+        assert(
+          green.length === 1 && green[0] === item.blankAnswer,
+          `the right answer is still the green one after the translations are added (got ${green.join(",")})`
+        );
+        assert(await nextButtonOnScreen(page), `다음 stays on screen with the translations showing (${item.word})`);
+        await page.click("#quiz-next");
+        await page.waitForSelector("#quiz-choices .choice-btn");
+      }
+      await page.close();
+    }
+
     // --- The Korean question line belongs to 독해 alone ---
     {
       for (const type of ["kanji", "grammar", "listening"]) {
