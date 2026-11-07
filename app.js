@@ -1126,6 +1126,43 @@ function relatedWordLines(word) {
 // today — still capped at the type's round length, since the point of it is a
 // short targeted session. A normal round mixes review with fresh material
 // instead (buildQuizPool).
+// ---------- 문맥규정 선택지 번역 ----------
+// After answering, each of the four choices shows its Korean meaning on the right
+// (2026-11-07, "선택지들 오른쪽에 해당번호의 번역"): the wrong words are the ones
+// you had no reason to look up, and what a distractor means is half of what the
+// question teaches. Post-answer only — beside the choices during the question it
+// would translate the answer.
+//   * data/<level>/choicegloss.json is authored: the inflected forms and the words
+//     vocab.json has no entry for (あらって → 씻어서, ちっとも → 조금도).
+//   * Anything else is a plain vocab.json word, so its meaning comes from there
+//     rather than being copied into a second file that could drift.
+let _choiceGloss = null; // choice text -> Korean
+async function buildChoiceGloss() {
+  if (_choiceGloss) return _choiceGloss;
+  const [authored, vocab] = await Promise.all([levelJson("choicegloss"), levelJson("vocab")]);
+  const map = new Map();
+  for (const e of vocab) {
+    if (!map.has(e.reading)) map.set(e.reading, e.meaning);
+    if (!map.has(e.word)) map.set(e.word, e.meaning);
+  }
+  for (const [k, v] of Object.entries(authored)) map.set(k, v);
+  _choiceGloss = map;
+  return map;
+}
+
+function addChoiceGlosses(buttons) {
+  if (!_choiceGloss) return;
+  buttons.forEach((b) => {
+    const ko = _choiceGloss.get(b.dataset.choice);
+    if (!ko) return;
+    const span = document.createElement("span");
+    span.className = "choice-gloss";
+    span.textContent = ko;
+    b.classList.add("has-gloss");
+    b.append(span);
+  });
+}
+
 async function startQuiz(type, { wrongOnly = false, focusKeys = null } = {}) {
   const items = await levelJson(type);
   if (XREF_TYPES.includes(type)) await Promise.all([buildXrefIndex(), buildRadicalIndex()]);
@@ -1133,6 +1170,7 @@ async function startQuiz(type, { wrongOnly = false, focusKeys = null } = {}) {
   // meaning, which needs both the authored glossary and the word index.
   else if (GLOSS_TYPES.includes(type))
     await Promise.all([buildXrefIndex(), buildGloss(), buildPatterns()]);
+  if (type === "vocab") await buildChoiceGloss();
   quiz.type = type;
   quiz.allItems = items;
   const keyField = QUIZ_KEY_FIELD[type];
@@ -1482,6 +1520,7 @@ function renderQuestion() {
     const btn = document.createElement("button");
     btn.className = "choice-btn";
     btn.textContent = choice;
+    btn.dataset.choice = choice;
     btn.addEventListener("click", () => selectAnswer(btn, choice, answer, item));
     choicesEl.appendChild(btn);
   });
@@ -1608,6 +1647,8 @@ function selectAnswer(btn, choice, answer, item) {
       if (b.textContent === answer) b.classList.add("correct");
     });
   }
+  // Added after the highlight above, which finds the right button by its text.
+  if (quiz.type === "vocab") addChoiceGlosses(buttons);
   recordAnswerOutcome(quiz.type, item[QUIZ_KEY_FIELD[quiz.type]], isCorrect);
   const noteEl = document.getElementById("quiz-note");
   const note = explanationFor(quiz.type, item);
