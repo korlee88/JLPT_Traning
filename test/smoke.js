@@ -914,7 +914,11 @@ async function main() {
         `a right blank answer counts as recall (${item.word} is in box ${vocabBox}, expected above 0)`
       );
       const note = await page.textContent("#quiz-note");
-      assert(note.includes(item.blankKo), `the vocab note carries the sentence's Korean (got "${note}")`);
+      // The sentence's Korean sits under the question once answered (2026-11-08),
+      // not inside the note where it read as one more note line.
+      const ko = (await page.textContent("#quiz-hint-ko")).trim();
+      assert(ko === `번역: ${item.blankKo}`, `the question's Korean shows under it after answering (got "${ko}")`);
+      assert(!note.includes(item.blankKo), `the note no longer repeats the translation (got "${note}")`);
       await page.close();
     }
 
@@ -2443,6 +2447,24 @@ async function main() {
       await page.waitForSelector("#quiz-choices .choice-btn");
       const pool = await page.evaluate(() => quiz.pool.map((v) => v.word));
       assert(pool.length === 1 && pool[0] === "浅（あさ）い", `the drill asks exactly the repeat misses (got ${pool})`);
+      await page.close();
+    }
+
+    // --- 한자·유의어: the question's Korean appears under it only after answering ---
+    for (const [type, field] of [["kanji", "sentenceKo"], ["synonym", "meaning"]]) {
+      const page = await browser.newPage({ viewport: PHONE });
+      await page.goto(URL, { waitUntil: "networkidle" });
+      await page.click('.tab-btn[data-tab="quiz"]');
+      await page.click(`#start-${type}`);
+      await page.waitForSelector("#quiz-choices .choice-btn");
+      assert(!(await page.isVisible("#quiz-hint-ko")), `${type}: no translation before answering`);
+      const want = await page.evaluate((f) => quiz.pool[quiz.index][f], field);
+      await clickChoice(page, await page.evaluate(() => quiz.answer));
+      const ko = (await page.textContent("#quiz-hint-ko")).trim();
+      assert(ko === `번역: ${want}`, `${type}: the translation shows under the question after answering (got "${ko}")`);
+      await page.click("#quiz-next");
+      await page.waitForSelector("#quiz-choices .choice-btn:not([disabled])");
+      assert(!(await page.isVisible("#quiz-hint-ko")), `${type}: the next question starts without it`);
       await page.close();
     }
 
