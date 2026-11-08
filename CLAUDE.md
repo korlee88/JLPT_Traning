@@ -67,6 +67,12 @@ vocab.json      [{ word, reading, meaning, blank, blankAnswer, blankWrong: [3], 
                   quiz is もんだい3 文脈規定: `blank` is an all-kana sentence with one
                   （　）, `blankAnswer` the inflected form that fills it, `blankWrong`
                   three authored words that do not, `blankKo` the sentence in Korean
+choicegloss.json { "<choice text>": "<Korean>" }          the translation shown beside each 문맥규정
+                  choice after answering. Authored only for what vocab.json cannot
+                  supply — inflected forms (あらって → 씻어서), ます-stems, words
+                  with no entry (ちっとも → 조금도); every other choice is a plain
+                  vocab word and takes its meaning from there. Keyed by the exact
+                  choice text, so one string means one thing across the file
 kanji.json      [{ word, reading, meaning, sentence, sentenceKo }]
                   quiz is もんだい1 読み / もんだい2 表記: `sentence` contains `word`
                   exactly once and no other kanji
@@ -148,6 +154,7 @@ kanjichar.json  { "<char>": { meaning, kun[], on[], freq, note } }   one row per
 
 **문자·어휘 쪽지시험 is the real paper's shape** (2026-11-05, nine photographed workbook pages with "쪽지시험 손을 보자 문자 어휘 사진과 같은 형태의 문제로 출제 바꿔줘"). The 한자 and 단어 quizzes had asked about a bare word; the real もんだい1–3 ask about a word **underlined inside a sentence**. 유의표현/용법 (もんだい4·5) have no quiz-file equivalent and stay on the 모의고사 tab.
 
+- **Each 문맥규정 choice shows its Korean meaning on the right once you have answered** (2026-11-07, "선택지들 오른쪽에 해당번호의 번역"). `addChoiceGlosses` appends a `.choice-gloss` span to every button in `selectAnswer`, **after** the highlight loop — that loop finds the right button by its `textContent`, so a gloss added first would break it; the original text also rides on `btn.dataset.choice`. Post-answer only: beside the choices during the question it would translate the answer. `buildChoiceGloss` (called from `startQuiz`) merges `vocab.json`'s meanings with `choicegloss.json`, authored entries winning. **Only 문맥규정 has it** — 문법, 유의어, 용법 and 독해 choices are suffixes or whole sentences with no per-choice meaning in their data, and would each need their own authored file. `test/smoke.js` checks every one of the 375 answer/wrong strings resolves to a gloss, that `choicegloss.json` holds no stray or redundant key, and that after answering each button shows its gloss at the right edge, the green button is still the right answer, and 다음 stays on screen at 390×844.
 - **한자 = もんだい1 読み or もんだい2 表記, chosen per question at random.** 読み underlines the kanji and offers four readings; 表記 underlines the reading and offers four spellings (`kanjiLookalikes`, the 모의고사's generator, with 1.5rem choices because 洗/洋 differ by a stroke). Both write to the one `word` review key. `quiz.mode` records which; `quiz.modeOverride` exists only so tests can pick one.
 - **読み distractors are near-misses of the answer** (`readingVariants`): one mora changed the way N4 tests it — 장음 added/dropped (せかい/せいかい, けんきゅう/けんきゅ), 탁점 flipped, っ added/dropped, 요음 swapped (しゃ/ちゃ, ゅ/ょ) — one of each kind before a second of any. **Only the kanji's own reading is edited** (`kanjiSpans` maps 昼ご飯 → ひる|ご|はん); okurigana, a leading お and an inner ご are printed in the question and changing them is eliminated unread. Nor a long vowel straight before printed okurigana (しろうい) or before ん/っ (ていんいん). 157 of 278 words get three; short ones (目, 花) top up from `pickReadingDistractors`.
 - **단어 = もんだい3 文脈規定.** A blank sentence and four Japanese words; the distractors are authored per entry (`blankWrong`), because a random word from the file fits the blank too often — the same reason 청해's are. Choices are in kana like the real paper's.
