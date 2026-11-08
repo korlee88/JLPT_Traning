@@ -2451,7 +2451,7 @@ async function main() {
     }
 
     // --- 한자·유의어: the question's Korean appears under it only after answering ---
-    for (const [type, field] of [["kanji", "sentenceKo"], ["synonym", "meaning"]]) {
+    for (const [type, field, pre] of [["kanji", "sentenceKo", ""], ["synonym", "meaning", ""], ["usage", "ko", "(정답 문장) "]]) {
       const page = await browser.newPage({ viewport: PHONE });
       await page.goto(URL, { waitUntil: "networkidle" });
       await page.click('.tab-btn[data-tab="quiz"]');
@@ -2461,7 +2461,9 @@ async function main() {
       const want = await page.evaluate((f) => quiz.pool[quiz.index][f], field);
       await clickChoice(page, await page.evaluate(() => quiz.answer));
       const ko = (await page.textContent("#quiz-hint-ko")).trim();
-      assert(ko === `번역: ${want}`, `${type}: the translation shows under the question after answering (got "${ko}")`);
+      assert(ko === `번역: ${pre}${want}`, `${type}: the translation shows under the question after answering (got "${ko}")`);
+      const note = await page.textContent("#quiz-note");
+      assert(!note.includes(want), `${type}: the note does not repeat it (got "${note}")`);
       await page.click("#quiz-next");
       await page.waitForSelector("#quiz-choices .choice-btn:not([disabled])");
       assert(!(await page.isVisible("#quiz-hint-ko")), `${type}: the next question starts without it`);
