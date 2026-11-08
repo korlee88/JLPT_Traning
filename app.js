@@ -1557,7 +1557,7 @@ function explanationFor(type, item) {
     case "synonym":
       return item.pair;
     case "usage":
-      return `${item.word} = ${item.meaning}\n바른 문장: ${item.answer}\n→ ${item.ko}`;
+      return `${item.word} = ${item.meaning}\n바른 문장: ${item.answer}`;
     case "grammar":
       // A ★ question shows the order first: which part went where is the
       // thing that was asked, and the note then explains the grammar point.
@@ -1643,6 +1643,11 @@ function questionTranslation(type, item) {
       return item.blankKo || null;
     case "synonym":
       return item.meaning || null;
+    case "usage":
+      // 용법's prompt is a single word, so what gets translated is the one
+      // sentence that uses it rightly (2026-11-08, "용법 쪽지시험에도 정답 문장
+      // 번역 밑에 보여줘").
+      return item.ko ? `(정답 문장) ${item.ko}` : null;
     default:
       return null;
   }
