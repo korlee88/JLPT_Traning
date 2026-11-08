@@ -1546,16 +1546,16 @@ function explanationFor(type, item) {
       return `${item.word} = ${item.meaning}`;
     case "vocab":
       return withRelated(
-        [`${item.word} (${item.reading}) = ${item.meaning}`, item.blankKo && `→ ${item.blankKo}`].filter(Boolean).join("\n"),
+        `${item.word} (${item.reading}) = ${item.meaning}`,
         item.word
       );
     case "kanji":
       return withRelated(
-        [`${item.word} → ${item.reading} (${item.meaning})`, item.sentenceKo && `→ ${item.sentenceKo}`].filter(Boolean).join("\n"),
+        `${item.word} → ${item.reading} (${item.meaning})`,
         item.word
       );
     case "synonym":
-      return `${item.pair}\n→ ${item.meaning}`;
+      return item.pair;
     case "usage":
       return `${item.word} = ${item.meaning}\n바른 문장: ${item.answer}\n→ ${item.ko}`;
     case "grammar":
@@ -1630,6 +1630,24 @@ function answerSpeech(type, item) {
   }
 }
 
+// The question sentence in Korean, written under the question once it has been
+// answered (2026-11-08, "질문의 번역도 답을 고르면 밑에 작성해줘"). It used to be a
+// "→" line inside the note, mixed in with the 부수 and related-word lines, where
+// it did not read as the question's translation. Post-answer only: during the
+// question it would translate the answer into the sentence.
+function questionTranslation(type, item) {
+  switch (type) {
+    case "kanji":
+      return item.sentenceKo || null;
+    case "vocab":
+      return item.blankKo || null;
+    case "synonym":
+      return item.meaning || null;
+    default:
+      return null;
+  }
+}
+
 function selectAnswer(btn, choice, answer, item) {
   const buttons = document.querySelectorAll(".choice-btn");
   buttons.forEach((b) => (b.disabled = true));
@@ -1637,6 +1655,12 @@ function selectAnswer(btn, choice, answer, item) {
   // listening again while reading it is where the question actually teaches.
   quiz.answered = true;
   renderReplayButtons();
+  const qko = questionTranslation(quiz.type, item);
+  if (qko) {
+    const hintKoEl = document.getElementById("quiz-hint-ko");
+    hintKoEl.textContent = `번역: ${qko}`;
+    hintKoEl.hidden = false;
+  }
   const isCorrect = choice === answer;
   if (isCorrect) {
     btn.classList.add("correct");
