@@ -59,13 +59,13 @@
             <button id="start-reading" class="btn quiz-type-btn" data-type="reading">독해 쪽지시험</button>
             <button id="start-listening" class="btn quiz-type-btn" data-type="listening">청해 쪽지시험</button>
           </div>
-          <!-- The review schedule, visible. Ids keep the "wrong-" prefix from
-               when this was a wrong/not-wrong queue; renaming them would churn
-               the CSS and tests for nothing. -->
+          <!-- Today's wrong answers only, emptied at 00:00 Korean time. Ids keep the
+               "wrong-" prefix from the older wrong/not-wrong queue; renaming them
+               would churn the CSS and tests for nothing. -->
           <section id="wrong-note" class="wrong-note">
-            <h3>복습 노트 <span id="wrong-total" class="wrong-total"></span></h3>
-            <p id="wrong-progress" class="wrong-progress" hidden></p>
-            <p id="wrong-empty" class="wrong-empty" hidden>오늘 복습할 것이 없습니다. 쪽지시험을 풀면 복습 일정이 쌓이고, 맞힐 때마다 다음 복습이 멀어집니다.</p>
+            <h3>오늘의 오답 노트 <span id="wrong-total" class="wrong-total"></span></h3>
+            <p id="wrong-hint" class="wrong-hint">오늘 틀린 문제만 모입니다. 다시 맞히면 빠지고, 한국시간 0시에 비워집니다.</p>
+            <p id="wrong-empty" class="wrong-empty" hidden>오늘 틀린 문제가 없습니다.</p>
             <div id="wrong-groups"></div>
             <!-- 오답 통계 (2026-11-06): how often each item was asked and missed,
                  so the ones missed again and again can be found and drilled. -->

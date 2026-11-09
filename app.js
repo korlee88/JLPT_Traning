@@ -430,13 +430,67 @@ function renderQuizStartStatus() {
   });
 }
 
-// ---------- 오답 노트 ----------
-// The wrong-answer queue has been steering review rounds since #33, but you could
-// never *see* it: the only way to learn what you keep missing was to keep missing
-// it. This renders the queue itself — per quiz type, with a button to run a round
-// of nothing but those items. It is also the short answer to "다하기 많네"
-// (2026-10-08): drilling the six words you actually got wrong beats redoing eight
-// full quizzes to meet them again.
+// ---------- 오늘의 오답 노트 ----------
+// The 복습 노트 used to list everything the Leitner schedule called due, which
+// after a few days was hundreds of items across every type (359 on the owner's
+// phone, 2026-11-09) — a to-do list nobody could finish. It is now only what you
+// got wrong **today**, and it empties itself at 00:00 Korean time ("복습에 당일
+// 한국시간 00시에 리셋되는 오답노트만 남겨줘"). The schedule is untouched: it still
+// steers what rounds draw and feeds the 오답 통계 below.
+//
+//   * Stored as { day, types: { <type>: [keys] } } under WRONG_TODAY_KEY. A list
+//     whose `day` is not today's Korean date is simply not read — the reset is a
+//     comparison, not a job that has to run.
+//   * `kstDay` names the day in Asia/Seoul explicitly rather than trusting the
+//     device clock, because "midnight" is the one thing the request pinned down.
+//   * Written from recordAnswerOutcome, the single place every answer passes
+//     (quizzes and exam alike): a miss adds the key, a right answer removes it, so
+//     the note empties as you re-learn things and a 오답만 풀기 round shrinks it.
+const WRONG_TODAY_KEY = `jlpt_wrong_today_${CURRENT_LEVEL}`;
+
+// YYYY-MM-DD in Korean time. Assembled from formatToParts rather than relying on
+// a locale's default shape.
+function kstDay(d = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(d);
+  const get = (t) => parts.find((p) => p.type === t).value;
+  return `${get("year")}-${get("month")}-${get("day")}`;
+}
+
+function loadWrongToday() {
+  const day = kstDay();
+  try {
+    const raw = JSON.parse(localStorage.getItem(WRONG_TODAY_KEY));
+    if (raw && raw.day === day && raw.types && typeof raw.types === "object") return raw;
+  } catch {
+    /* unreadable — start the day empty */
+  }
+  return { day, types: {} };
+}
+
+function saveWrongToday(data) {
+  try {
+    localStorage.setItem(WRONG_TODAY_KEY, JSON.stringify(data));
+  } catch {
+    /* localStorage unavailable — the note just won't persist */
+  }
+}
+
+function noteWrongToday(type, itemKey, correct) {
+  const data = loadWrongToday();
+  const list = data.types[type] || [];
+  const i = list.indexOf(itemKey);
+  if (correct && i >= 0) list.splice(i, 1);
+  else if (!correct && i < 0) list.push(itemKey);
+  if (list.length) data.types[type] = list;
+  else delete data.types[type];
+  saveWrongToday(data);
+}
+
 const wrongEntriesFor = (type) => levelJson(type);
 
 // One line per missed item. The word-shaped types reuse the post-answer recap's
@@ -468,21 +522,20 @@ async function renderWrongNote() {
   const groupsEl = document.getElementById("wrong-groups");
   const emptyEl = document.getElementById("wrong-empty");
   const totalEl = document.getElementById("wrong-total");
-  const progressEl = document.getElementById("wrong-progress");
   const store = loadReview();
-  const today = todayStr();
+  const todays = loadWrongToday();
   groupsEl.innerHTML = "";
   let total = 0;
-  let learningAll = 0;
-  let masteredAll = 0;
   let pruned = false;
+  let prunedToday = false;
   const stats = [];
 
   // Object.keys(QUIZ_TYPE_LABELS) rather than the store's own key order, so the
   // groups come out in the same order as the quiz buttons above them.
   for (const type of Object.keys(QUIZ_TYPE_LABELS)) {
-    const schedule = store.types[type];
-    if (!schedule || !Object.keys(schedule).length) continue;
+    const schedule = store.types[type] || {};
+    const wrongKeys = todays.types[type] || [];
+    if (!Object.keys(schedule).length && !wrongKeys.length) continue;
     const entries = await wrongEntriesFor(type);
     const keyField = QUIZ_KEY_FIELD[type];
     const byKey = new Map(entries.map((e) => [e[keyField], e]));
@@ -497,53 +550,44 @@ async function renderWrongNote() {
       }
     }
     const keys = Object.keys(schedule);
-    if (!keys.length) continue;
+    if (keys.length) {
+      stats.push({
+        type,
+        n: keys.reduce((a, k) => a + (schedule[k].n || 0), 0),
+        miss: keys.reduce((a, k) => a + (schedule[k].miss || 0), 0),
+        missed: keys
+          .filter((k) => (schedule[k].miss || 0) >= 2)
+          .map((k) => ({ key: k, item: byKey.get(k), ...schedule[k] })),
+      });
+    }
 
-    stats.push({
-      type,
-      n: keys.reduce((a, k) => a + (schedule[k].n || 0), 0),
-      miss: keys.reduce((a, k) => a + (schedule[k].miss || 0), 0),
-      missed: keys
-        .filter((k) => (schedule[k].miss || 0) >= 2)
-        .map((k) => ({ key: k, item: byKey.get(k), ...schedule[k] })),
-    });
-    const due = dueKeys(schedule, today);
-    const mastered = keys.filter((k) => schedule[k].box >= MASTERED_BOX).length;
-    const learning = keys.length - mastered;
-    learningAll += learning;
-    masteredAll += mastered;
-    // A card per type with something due *now*. Eight cards reading "오늘 0개"
-    // would bury the one that has work in it; the running totals go in the one
-    // progress line under the heading instead.
-    if (!due.length) continue;
-    total += due.length;
+    const live = wrongKeys.filter((k) => byKey.has(k));
+    if (live.length !== wrongKeys.length) {
+      if (live.length) todays.types[type] = live;
+      else delete todays.types[type];
+      prunedToday = true;
+    }
+    if (!live.length) continue;
+    total += live.length;
 
     const group = document.createElement("div");
     group.className = "wrong-group";
 
     // The drill button stays outside the collapsible part: it is the reason the
     // note exists, and burying the one action behind a tap to expand would undo
-    // the point of it. Only the list collapses — a 40-word 한자 queue would
-    // otherwise push the quiz buttons it sits under off the screen.
+    // the point of it. Only the list collapses.
     const head = document.createElement("div");
     head.className = "wrong-head";
     const name = document.createElement("span");
     name.className = "wrong-name";
-    name.textContent = `${shortTypeLabel(type)} 오늘 ${due.length}개`;
+    name.textContent = `${shortTypeLabel(type)} ${live.length}개`;
     const drill = document.createElement("button");
     drill.className = "btn wrong-drill";
     drill.dataset.type = type;
-    drill.textContent = `오늘 복습 (${Math.min(due.length, roundSizeFor(type))}문제)`;
-    drill.addEventListener("click", () => startQuiz(type, { wrongOnly: true }));
+    drill.textContent = `오답만 풀기 (${Math.min(live.length, roundSizeFor(type))}문제)`;
+    drill.addEventListener("click", () => startQuiz(type, { focusKeys: live.slice() }));
     head.append(name, drill);
     group.append(head);
-
-    // What the boxes are actually for: a word is not done the first time you get
-    // it right, and this is where that shows.
-    const sub = document.createElement("p");
-    sub.className = "wrong-sub";
-    sub.textContent = `외우는 중 ${learning}개 · 외움 ${mastered}개`;
-    group.append(sub);
 
     const detail = document.createElement("details");
     detail.className = "wrong-detail";
@@ -553,7 +597,7 @@ async function renderWrongNote() {
     const list = document.createElement("ul");
     list.className = "wrong-list";
     list.lang = "ja";
-    for (const k of due) {
+    for (const k of live) {
       const li = document.createElement("li");
       li.textContent = reviewLine(type, byKey.get(k));
       list.append(li);
@@ -564,11 +608,8 @@ async function renderWrongNote() {
   }
 
   if (pruned) saveReview(store);
+  if (prunedToday) saveWrongToday(todays);
   totalEl.textContent = total ? `(${total})` : "";
-  // Shown even on a day with nothing due, because "외움 12개" is the answer to
-  // "am I getting anywhere" and a day off from reviews is not a day of no progress.
-  progressEl.textContent = `외우는 중 ${learningAll}개 · 외움 ${masteredAll}개`;
-  progressEl.hidden = learningAll + masteredAll === 0;
   emptyEl.hidden = groupsEl.children.length > 0;
   renderWrongStats(stats);
 }
@@ -907,6 +948,7 @@ function recordAnswerOutcome(type, itemKey, correct) {
   else if (prev && prev.lastMiss) entry.lastMiss = prev.lastMiss;
   forType[itemKey] = entry;
   saveReview(store);
+  noteWrongToday(type, itemKey, correct);
 }
 
 // The keys of `schedule` that are due today or overdue, most overdue first and
@@ -1122,10 +1164,10 @@ function relatedWordLines(word) {
   return lines;
 }
 
-// `wrongOnly` runs a round drawn entirely from what the schedule says is due
-// today — still capped at the type's round length, since the point of it is a
-// short targeted session. A normal round mixes review with fresh material
-// instead (buildQuizPool).
+// `focusKeys` runs a round drawn entirely from those items — today's 오답 노트,
+// or what the 오답 통계 lists — still capped at the type's round length, since the
+// point of it is a short targeted session. A normal round mixes review with fresh
+// material instead (buildQuizPool).
 // ---------- 문맥규정 선택지 번역 ----------
 // After answering, each of the four choices shows its Korean meaning on the right
 // (2026-11-07, "선택지들 오른쪽에 해당번호의 번역"): the wrong words are the ones
@@ -1163,7 +1205,7 @@ function addChoiceGlosses(buttons) {
   });
 }
 
-async function startQuiz(type, { wrongOnly = false, focusKeys = null } = {}) {
+async function startQuiz(type, { focusKeys = null } = {}) {
   const items = await levelJson(type);
   if (XREF_TYPES.includes(type)) await Promise.all([buildXrefIndex(), buildRadicalIndex()]);
   // 독해/문법 don't use the cross-reference note, but their tapped words show a
@@ -1176,22 +1218,16 @@ async function startQuiz(type, { wrongOnly = false, focusKeys = null } = {}) {
   const keyField = QUIZ_KEY_FIELD[type];
   const schedule = loadReview().types[type] || {};
   const roundSize = roundSizeFor(type);
-  quiz.wrongOnly = wrongOnly || !!focusKeys;
+  quiz.wrongOnly = !!focusKeys;
   if (focusKeys) {
-    // 자주 틀린 문제 drill: the items the 오답 통계 lists, whatever their due date.
     const want = new Set(focusKeys);
     quiz.pool = shuffle(items.filter((v) => want.has(v[keyField]))).slice(0, roundSize);
-    if (!quiz.pool.length) return;
-  } else if (wrongOnly) {
-    const queued = new Set(dueKeys(schedule));
-    const only = items.filter((v) => queued.has(v[keyField]));
     // Cleared between opening the note and tapping the button: nothing to drill,
     // so repaint the note instead of starting an empty round.
-    if (!only.length) {
+    if (!quiz.pool.length) {
       renderWrongNote();
       return;
     }
-    quiz.pool = shuffle(only).slice(0, roundSize);
   } else {
     quiz.pool = buildQuizPool(items, keyField, Math.min(roundSize, items.length), schedule);
   }

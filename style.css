@@ -113,6 +113,7 @@ main {
 .wrong-note { margin-top: 18px; border-top: 1px solid var(--border); padding-top: 14px; }
 .wrong-note h3 { margin: 0 0 10px; font-size: 1rem; }
 .wrong-total { color: var(--muted); font-weight: 400; }
+.wrong-hint { margin: 0 0 10px; color: var(--muted); font-size: 0.85rem; line-height: 1.5; }
 /* No display rule: [hidden] does the hiding (the .quiz-replay trap). */
 .wrong-empty { margin: 0; color: var(--muted); font-size: 0.9rem; line-height: 1.5; }
 .wrong-group { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; }
@@ -120,9 +121,6 @@ main {
 .wrong-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
 .wrong-name { font-weight: 600; }
 .wrong-drill { padding: 8px 12px; font-size: 0.9rem; }
-/* No display rule: [hidden] hides it before anything is scheduled. */
-.wrong-progress { margin: 0 0 10px; color: var(--muted); font-size: 0.9rem; }
-.wrong-sub { margin: 8px 0 0; color: var(--muted); font-size: 0.85rem; }
 .wrong-detail summary { cursor: pointer; color: var(--muted); font-size: 0.9rem; margin-top: 10px; }
 .wrong-list { margin: 10px 0 0; padding-left: 18px; color: var(--muted); font-size: 0.9rem; line-height: 1.6; }
 .wrong-list li { margin-bottom: 6px; word-break: break-word; }
