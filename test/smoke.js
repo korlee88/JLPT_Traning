@@ -2221,7 +2221,7 @@ async function main() {
       await page.close();
     }
 
-    // --- A missed exam question comes back in the 복습 노트 ---
+    // --- A missed exam question comes back in the 오답 노트 ---
     // The five もんだい drawn from the quiz files feed the same Leitner schedule;
     // a word you missed under a clock is exactly a word to see again tomorrow.
     {
@@ -2238,6 +2238,8 @@ async function main() {
       });
       assert(probe.entry, `the missed exam word was scheduled (${probe.key})`);
       assert(probe.entry.box === 0, `a missed exam word goes back to box 0 (got ${probe.entry.box})`);
+      const inNote = await page.evaluate((k) => (JSON.parse(localStorage.getItem(WRONG_TODAY_KEY)).types.kanji || []).includes(k), probe.key);
+      assert(inNote, `...and it is in today's 오답 노트 (${probe.key})`);
       await page.close();
     }
 
@@ -2742,72 +2744,135 @@ async function main() {
       await page.close();
     }
 
-    // --- 오답 노트: the review queue, rendered ---
-    // The queue has steered review rounds since #33 while being invisible, so
-    // nothing here could regress noticeably. These checks are the floor: the
-    // groups match the store, the lines match what the page itself formats, and a
-    // key whose entry has left the data file is dropped rather than counted.
+    // --- 오늘의 오답 노트: only today's misses, emptied at Korean midnight ---
+    // The note used to list everything the schedule called due (359 items on the
+    // owner's phone). It is now just today's wrong answers; the schedule keeps
+    // steering rounds and feeding the 오답 통계 underneath.
     {
+      const STALE = "存在しない語";
       let page = await browser.newPage({ viewport: PHONE });
       await page.goto(URL, { waitUntil: "networkidle" });
       await page.click('.tab-btn[data-tab="quiz"]');
       await page.waitForSelector("#wrong-note");
-      assert(await page.isVisible("#wrong-empty"), "복습 노트 says so while nothing is scheduled");
-      assert(!(await page.isVisible("#wrong-progress")), "no progress line before anything is scheduled");
-      assert(
-        (await page.textContent("#wrong-total")).trim() === "",
-        "no count badge on an empty queue"
-      );
-      assert((await page.locator(".wrong-group").count()) === 0, "no groups on an empty queue");
+      assert(await page.isVisible("#wrong-empty"), "the note says so while nothing was missed today");
+      assert((await page.locator("#wrong-progress").count()) === 0, "the 외우는 중/외움 progress line is gone");
+      assert((await page.textContent("#wrong-hint")).includes("한국시간 0시"), "the note says when it empties");
+      assert((await page.textContent("#wrong-total")).trim() === "", "no count badge on an empty note");
+      assert((await page.locator(".wrong-group").count()) === 0, "no groups on an empty note");
 
-      // Seeded the way wrong answers would leave it, plus one key whose entry is
-      // gone — that one can never be answered right again, so it has to be pruned
-      // or it inflates the count forever.
-      await page.close();
-
-      // A fresh page, with the OLD key already in place before any script runs —
-      // which is how a phone that has been using the app meets this change.
-      const STALE = "存在しない語";
-      const seeded = await (async () => {
-        const probe = await browser.newPage({ viewport: PHONE });
-        await probe.goto(URL, { waitUntil: "networkidle" });
-        const keys = await probe.evaluate(async () => {
-          const kanji = await fetch("data/n4/kanji.json").then((r) => r.json());
-          const vocab = await fetch("data/n4/vocab.json").then((r) => r.json());
-          return {
-            kanjiKeys: kanji.slice(0, 12).map((e) => e.word),
-            vocabKeys: vocab.slice(0, 2).map((e) => e.word),
-          };
-        });
-        await probe.close();
-        return keys;
-      })();
-      page = await browser.newPage({ viewport: PHONE });
-      await page.addInitScript(
-        ([k, v, stale]) => {
-          localStorage.setItem(
-            "jlpt_wrong_items_n4",
-            JSON.stringify({ kanji: [...k, stale], vocab: v })
-          );
-        },
-        [seeded.kanjiKeys, seeded.vocabKeys, STALE]
-      );
-      await page.goto(URL, { waitUntil: "networkidle" });
-      await page.click('.tab-btn[data-tab="quiz"]');
-      await page.waitForFunction(() => document.querySelectorAll(".wrong-group").length === 2);
+      const seeded = await page.evaluate(async (stale) => {
+        const kanji = await levelJson("kanji");
+        const vocab = await levelJson("vocab");
+        const k = kanji.slice(0, 12).map((e) => e.word);
+        const v = vocab.slice(0, 2).map((e) => e.word);
+        for (const w of k) recordAnswerOutcome("kanji", w, false);
+        for (const w of v) recordAnswerOutcome("vocab", w, false);
+        // Missed, then got right the same day: not in the note any more.
+        recordAnswerOutcome("vocab", vocab[5].word, false);
+        recordAnswerOutcome("vocab", vocab[5].word, true);
+        // Missed and never answered right, but the entry has left the data file.
+        recordAnswerOutcome("kanji", stale, false);
+        await renderWrongNote();
+        return { kanjiKeys: k, vocabKeys: v, cleared: vocab[5].word };
+      }, STALE);
 
       const summaries = await page.$$eval(".wrong-name", (els) => els.map((e) => e.textContent));
       assert(
-        summaries.join(" | ") === "한자 읽기·표기 오늘 12개 | 문맥규정 오늘 2개",
+        summaries.join(" | ") === "한자 읽기·표기 12개 | 문맥규정 2개",
         `the note groups by type in the quiz buttons' order (got "${summaries.join(" | ")}")`
       );
-      const totalBadge = (await page.textContent("#wrong-total")).trim();
-      assert(totalBadge === "(14)", `the heading counts every queued item (got "${totalBadge}")`);
-      assert(!(await page.isVisible("#wrong-empty")), "the empty line is gone once something is queued");
+      assert((await page.textContent("#wrong-total")).trim() === "(14)", "the heading counts today's misses");
+      assert(!(await page.isVisible("#wrong-empty")), "the empty line is gone once something was missed");
+      const stored = await page.evaluate(() => ({
+        today: JSON.parse(localStorage.getItem(WRONG_TODAY_KEY)),
+        schedKanji: Object.keys(JSON.parse(localStorage.getItem("jlpt_review_n4")).types.kanji),
+        day: kstDay(),
+      }));
+      assert(stored.today.day === stored.day, "the note is stamped with today's Korean date");
+      assert(
+        !stored.today.types.kanji.includes(STALE) && stored.today.types.kanji.length === 12,
+        "a key with no entry left in the data file is dropped from the note"
+      );
+      assert(
+        !stored.schedKanji.includes(STALE) && stored.schedKanji.length === 12,
+        "...and from the schedule, as before"
+      );
+      assert(
+        !(stored.today.types.vocab || []).includes(seeded.cleared) && stored.today.types.vocab.length === 2,
+        "a word missed and then answered right the same day is not in the note"
+      );
 
-      // Seeding the OLD key also exercises the one-time migration: everything the
-      // leaky-bucket queue held was by definition not learned, so it lands in box
-      // 0 due today — which is why all 12 show as due above.
+      // The lines are asked of the page, not reimplemented here.
+      const lines = await page.evaluate(async (keys) => {
+        const kanji = await levelJson("kanji");
+        const byWord = new Map(kanji.map((e) => [e.word, e]));
+        const group = [...document.querySelectorAll(".wrong-group")]
+          .find((g) => g.querySelector(".wrong-name").textContent.startsWith("한자"));
+        return {
+          want: keys.map((k) => reviewLine("kanji", byWord.get(k))),
+          got: [...group.querySelectorAll(".wrong-list li")].map((li) => li.textContent),
+        };
+      }, seeded.kanjiKeys);
+      assert(
+        lines.got.join("\n") === lines.want.join("\n"),
+        `every missed item is listed as the page formats it, in the order missed (got ${lines.got.length} lines, wanted ${lines.want.length})`
+      );
+      assert(
+        lines.want[0].includes("\u2192") && lines.want[0].includes("("),
+        `a 한자 line carries word, reading and meaning (got "${lines.want[0]}")`
+      );
+      const drillLabels = await page.$$eval(".wrong-drill", (els) => els.map((e) => e.textContent));
+      assert(
+        drillLabels.join(" | ") === "오답만 풀기 (10문제) | 오답만 풀기 (2문제)",
+        `the drill button says how long the round will be, capped at the round size (got "${drillLabels.join(" | ")}")`
+      );
+
+      // --- The reset: a list stamped with another Korean day is not read ---
+      const reset = await page.evaluate(() => ({
+        // 14:59:59Z is 23:59:59 in Seoul, 15:00:00Z is 00:00:00 the next day.
+        before: kstDay(new Date("2026-11-08T14:59:59Z")),
+        after: kstDay(new Date("2026-11-08T15:00:00Z")),
+        shape: /^\d{4}-\d{2}-\d{2}$/.test(kstDay()),
+      }));
+      assert(reset.before === "2026-11-08" && reset.after === "2026-11-09", `Korean midnight is where the day turns (got ${reset.before} / ${reset.after})`);
+      assert(reset.shape, "kstDay is YYYY-MM-DD");
+      await page.evaluate(() => {
+        localStorage.setItem(WRONG_TODAY_KEY, JSON.stringify({ day: "2000-01-01", types: { kanji: ["会社"] } }));
+      });
+      const yesterday = await page.evaluate(async () => {
+        await renderWrongNote();
+        return {
+          groups: document.querySelectorAll(".wrong-group").length,
+          emptyShown: !document.getElementById("wrong-empty").hidden,
+          loaded: loadWrongToday(),
+        };
+      });
+      assert(yesterday.groups === 0 && yesterday.emptyShown, "yesterday's note is not shown today");
+      assert(Object.keys(yesterday.loaded.types).length === 0, "yesterday's list is not carried into today");
+      // The schedule (and the 오답 통계 drawn from it) outlives the reset.
+      const schedAfter = await page.evaluate(() => Object.keys(JSON.parse(localStorage.getItem("jlpt_review_n4")).types.kanji).length);
+      assert(schedAfter === 12, `the review schedule is not touched by the daily reset (got ${schedAfter} kanji entries, wanted 12)`);
+      await page.close();
+
+      // --- The legacy wrong-answer queue still migrates, but is not today's miss ---
+      const keys = await (async () => {
+        const probe = await browser.newPage({ viewport: PHONE });
+        await probe.goto(URL, { waitUntil: "networkidle" });
+        const k = await probe.evaluate(async () => (await levelJson("kanji")).slice(0, 12).map((e) => e.word));
+        await probe.close();
+        return k;
+      })();
+      page = await browser.newPage({ viewport: PHONE });
+      await page.addInitScript(
+        ([k, stale]) => {
+          localStorage.setItem("jlpt_wrong_items_n4", JSON.stringify({ kanji: [...k, stale] }));
+        },
+        [keys, STALE]
+      );
+      await page.goto(URL, { waitUntil: "networkidle" });
+      await page.click('.tab-btn[data-tab="quiz"]');
+      await page.waitForSelector("#wrong-note");
+      await page.waitForFunction(() => document.querySelectorAll(".wrong-group").length === 0 && !document.getElementById("wrong-empty").hidden);
       const migrated = await page.evaluate(() => {
         const raw = JSON.parse(localStorage.getItem("jlpt_review_n4"));
         const kanji = raw.types.kanji;
@@ -2822,53 +2887,11 @@ async function main() {
       assert(migrated.version === 1, `the schedule is written at version 1 (got ${migrated.version})`);
       assert(
         !migrated.keys.includes(STALE) && migrated.keys.length === 12,
-        `a key with no entry left in the data file is pruned from the schedule (got ${migrated.keys.length} keys)`
+        `a migrated key with no entry left in the data file is pruned (got ${migrated.keys.length} keys)`
       );
       assert(
         migrated.boxes.join() === "0" && migrated.dues.join() === migrated.today,
-        `the old wrong-answer queue migrates into box 0, due today (boxes ${migrated.boxes}, dues ${migrated.dues})`
-      );
-
-      const progress = (await page.textContent("#wrong-progress")).trim();
-      assert(
-        progress === "외우는 중 14개 · 외움 0개",
-        `the progress line counts everything scheduled, not just what is due (got "${progress}")`
-      );
-      const subs = await page.$$eval(".wrong-sub", (els) => els.map((e) => e.textContent));
-      assert(
-        subs.join(" | ") === "외우는 중 12개 · 외움 0개 | 외우는 중 2개 · 외움 0개",
-        `each card says how far along that type is (got "${subs.join(" | ")}")`
-      );
-
-      // The lines are asked of the page, not reimplemented here — the word-shaped
-      // types take the post-answer recap's own first line, so this also pins that
-      // the two haven't drifted apart.
-      const lines = await page.evaluate(async (keys) => {
-        const kanji = await fetch("data/n4/kanji.json").then((r) => r.json());
-        const byWord = new Map(kanji.map((e) => [e.word, e]));
-        const group = [...document.querySelectorAll(".wrong-group")]
-          .find((g) => g.querySelector(".wrong-name").textContent.startsWith("한자"));
-        return {
-          want: keys.map((k) => reviewLine("kanji", byWord.get(k))),
-          got: [...group.querySelectorAll(".wrong-list li")].map((li) => li.textContent),
-        };
-      }, seeded.kanjiKeys);
-      // Compared as sets: dueKeys shuffles within equal priority on purpose, so
-      // the list order is not stable and asserting it would be asserting the bug.
-      assert(
-        lines.got.length === lines.want.length &&
-          [...lines.got].sort().join("\n") === [...lines.want].sort().join("\n"),
-        `every queued item is listed as the page formats it (got ${lines.got.length} lines, wanted ${lines.want.length})`
-      );
-      assert(
-        lines.want[0].includes("\u2192") && lines.want[0].includes("("),
-        `a 한자 line carries word, reading and meaning (got "${lines.want[0]}")`
-      );
-
-      const drillLabels = await page.$$eval(".wrong-drill", (els) => els.map((e) => e.textContent));
-      assert(
-        drillLabels.join(" | ") === "오늘 복습 (10문제) | 오늘 복습 (2문제)",
-        `the drill button says how long the round will be, capped at the round size (got "${drillLabels.join(" | ")}")`
+        `the old queue migrates into box 0, due today (boxes ${migrated.boxes}, dues ${migrated.dues})`
       );
       await page.close();
     }
@@ -2903,18 +2926,16 @@ async function main() {
       await page.close();
     }
 
-    // --- 오늘 복습 drills what is due, and a right answer pushes it out ---
+    // --- 오답만 풀기 drills today's misses; right answers leave the note, the schedule moves on ---
     {
       const page = await browser.newPage({ viewport: PHONE });
       await page.goto(URL, { waitUntil: "networkidle" });
       const seeded = await page.evaluate(async () => {
-        const vocab = await fetch("data/n4/vocab.json").then((r) => r.json());
-        // Exactly a round's worth: the drill is capped at the round size, so a
-        // longer queue could not be emptied in one go and the assertion below
-        // would be testing the cap rather than the leaky bucket.
-        const keys = vocab.slice(0, 5).map((e) => e.word);
-        localStorage.setItem("jlpt_wrong_items_n4", JSON.stringify({ vocab: keys }));
-        // Today's 단어 result already recorded, from a full round.
+        const vocab = await levelJson("vocab");
+        // Exactly a round's worth, so one drill could empty it were nothing missed.
+        const keys = vocab.slice(0, 10).map((e) => e.word);
+        for (const k of keys) recordAnswerOutcome("vocab", k, false);
+        // Today's 문맥규정 result already recorded, from a full round.
         localStorage.setItem(
           "jlpt_quiz_results_n4",
           JSON.stringify({ [todayStr()]: { vocab: { score: 9, total: 10 } } })
@@ -2933,26 +2954,55 @@ async function main() {
       }));
       assert(pool.wrongOnly, "the drill round is marked wrongOnly");
       assert(
-        pool.words.length === 5 && pool.words.every((w) => seeded.includes(w)),
-        `every question in the drill comes from the queue (got ${pool.words.length}: ${pool.words.join(", ")})`
+        pool.words.length === 10 && pool.words.every((w) => seeded.includes(w)),
+        `every question in the drill is one missed today (got ${pool.words.length}: ${pool.words.join(", ")})`
       );
       assert(new Set(pool.words).size === pool.words.length, "the drill round never repeats an item");
 
-      // Answer all five right. Under the old leaky bucket this retired them for
-      // good; now each moves to box 1, due tomorrow — so today's list empties
-      // while the words stay scheduled.
+      // First question wrong on purpose, the other nine right.
       for (let i = 0; i < pool.words.length; i++) {
-        await page.waitForSelector("#quiz-choices .choice-btn");
-        const want = await page.evaluate(() => quiz.answer);
-        await clickChoice(page, want);
+        await page.waitForSelector("#quiz-choices .choice-btn:not([disabled])");
+        if (i === 0) {
+          await page.evaluate(() => {
+            [...document.querySelectorAll(".choice-btn")].find((b) => b.textContent !== quiz.answer).click();
+          });
+        } else {
+          await clickChoice(page, await page.evaluate(() => quiz.answer));
+        }
         await page.click("#quiz-next");
       }
       await page.waitForSelector("#quiz-result:not([hidden])");
       await page.click("#quiz-retry");
-      await page.waitForFunction(() => document.querySelectorAll(".wrong-group").length === 0);
-      assert(await page.isVisible("#wrong-empty"), "answering everything due empties today's 복습 노트");
+      await page.waitForFunction(() => document.querySelectorAll(".wrong-group").length === 1);
+      const left = await page.$$eval(".wrong-name", (els) => els.map((e) => e.textContent));
+      assert(left.join() === "문맥규정 1개", `only the one still wrong stays in the note (got ${left})`);
+      assert(
+        pool.words.includes(await page.evaluate(() => JSON.parse(localStorage.getItem(WRONG_TODAY_KEY)).types.vocab[0])),
+        "and it is the word that was missed in the drill"
+      );
 
-      // The point of the whole change: right once is not done.
+      // The badge is "today's 쪽지시험": a drill of items you already missed must
+      // not overwrite a full round's score.
+      const badge = await page.evaluate(
+        () => JSON.parse(localStorage.getItem("jlpt_quiz_results_n4"))[todayStr()].vocab
+      );
+      assert(
+        badge.score === 9 && badge.total === 10,
+        `a drill round leaves an existing result alone (got ${badge.score}/${badge.total})`
+      );
+
+      // Second drill: just that one word, answered right. The note is empty.
+      await page.click(".wrong-drill");
+      await page.waitForSelector("#quiz-choices .choice-btn");
+      assert((await page.evaluate(() => quiz.pool.length)) === 1, "the next drill is the one word left");
+      await clickChoice(page, await page.evaluate(() => quiz.answer));
+      await page.click("#quiz-next");
+      await page.waitForSelector("#quiz-result:not([hidden])");
+      await page.click("#quiz-retry");
+      await page.waitForFunction(() => document.querySelectorAll(".wrong-group").length === 0);
+      assert(await page.isVisible("#wrong-empty"), "answering everything missed today empties the note");
+
+      // A right answer does not retire the word: the schedule moves on a box.
       const after = await page.evaluate(() => {
         const t = JSON.parse(localStorage.getItem("jlpt_review_n4")).types.vocab;
         return {
@@ -2963,23 +3013,8 @@ async function main() {
         };
       });
       assert(
-        after.count === 5 && after.boxes.join() === "1" && after.dues.join() === after.tomorrow,
+        after.count === 10 && after.boxes.join() === "1" && after.dues.join() === after.tomorrow,
         `a correct answer schedules the word again instead of retiring it (${after.count} words, boxes ${after.boxes}, due ${after.dues} vs tomorrow ${after.tomorrow})`
-      );
-      const stillShown = (await page.textContent("#wrong-progress")).trim();
-      assert(
-        stillShown === "외우는 중 5개 · 외움 0개",
-        `the progress line still counts them while nothing is due (got "${stillShown}")`
-      );
-
-      // The badge is "today's 쪽지시험": a 6-item drill of items you already missed
-      // must not overwrite a full round's score.
-      const badge = await page.evaluate(
-        () => JSON.parse(localStorage.getItem("jlpt_quiz_results_n4"))[todayStr()].vocab
-      );
-      assert(
-        badge.score === 9 && badge.total === 10,
-        `a drill round leaves an existing result alone (got ${badge.score}/${badge.total})`
       );
       await page.close();
     }
