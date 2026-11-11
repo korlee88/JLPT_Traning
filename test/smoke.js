@@ -352,7 +352,7 @@ async function main() {
       }
 
       {
-        // Drive a full kana round and check every question's four choices are
+        // Drive a full kana round and check every question's two choices are
         // distinct — the cases that break are じ/ぢ both rendering as 지, or
         // ざ/じゃ both as 자 now that 요음 are in.
         await page.click("#start-hiragana");
@@ -368,7 +368,7 @@ async function main() {
           );
           const prompt = await page.textContent("#quiz-prompt");
           assert(
-            shown.length === 4 && new Set(shown).size === 4,
+            shown.length === 2 && new Set(shown).size === 2,
             `kana round never repeats a choice (${prompt} showed [${shown.join(", ")}])`
           );
           await page.locator("#quiz-choices .choice-btn").first().click();
@@ -387,7 +387,7 @@ async function main() {
           // they're distinct, all katakana, and none of them is the answer twice.
           const choices = await page.$$eval("#quiz-choices .choice-btn", (els) => els.map((e) => e.textContent.trim()));
           const answer = await page.evaluate(() => quiz.pool[quiz.index].word);
-          assert(new Set(choices).size === 4, `외래어 choices are all distinct (got ${choices.join(" / ")})`);
+          assert(choices.length === 2 && new Set(choices).size === 2, `외래어 choices are all distinct (got ${choices.join(" / ")})`);
           assert(choices.includes(answer), `the correct spelling is among the choices (${answer} in ${choices.join(" / ")})`);
           assert(
             choices.every((c) => /^[ァ-ヶー]+$/.test(c)),
@@ -419,10 +419,10 @@ async function main() {
           assert(await page.isVisible("#quiz-prompt .quiz-target.blank"), "the vocab blank is marked as the target");
           assert(!(await page.isVisible("#quiz-reveal")), `no reading cue on a 문맥규정 question (${item.word})`);
           const shown = await page.$$eval("#quiz-choices .choice-btn", (els) => els.map((e) => e.textContent).sort());
-          const want = [item.blankAnswer, ...item.blankWrong].sort();
           assert(
-            JSON.stringify(shown) === JSON.stringify(want),
-            `vocab choices are the entry's answer + its three authored wrong words (got ${shown.join(" / ")})`
+            shown.length === 2 && shown.includes(item.blankAnswer) &&
+              shown.every((c) => c === item.blankAnswer || item.blankWrong.includes(c)),
+            `vocab choices are the answer + one of its authored wrong words (got ${shown.join(" / ")})`
           );
         },
         async () => {
@@ -471,13 +471,13 @@ async function main() {
           );
 
           // 읽기 offers near-miss readings (one mora changed: 장음, 탁점, っ, 요음),
-          // 표기 offers look-alike spellings. Either way: four distinct choices,
+          // 표기 offers look-alike spellings. Either way: two distinct choices,
           // the answer among them, and the right script for the direction.
           const choices = await page.$$eval("#quiz-choices .choice-btn", (els) => els.map((e) => e.textContent.trim()));
           const kItem = await page.evaluate(() => quiz.pool[quiz.index]);
           const kAnswer = await page.evaluate(() => quiz.answer);
-          assert(choices.length === 4, `kanji quiz offers 4 choices (got ${choices.length})`);
-          assert(new Set(choices).size === 4, `kanji quiz choices are all distinct (got ${choices.join(" / ")})`);
+          assert(choices.length === 2, `kanji quiz offers 2 choices (got ${choices.length})`);
+          assert(new Set(choices).size === 2, `kanji quiz choices are all distinct (got ${choices.join(" / ")})`);
           assert(choices.includes(kAnswer), `the answer is among the kanji choices (got ${choices.join(" / ")})`);
           assert(kAnswer === (mode === "write" ? kItem.word : kItem.reading), `the ${mode} answer is the right field`);
           if (mode === "read") {
@@ -519,8 +519,8 @@ async function main() {
             shown: [...document.querySelectorAll("#quiz-choices .choice-btn")].map((b) => b.textContent),
           }));
           assert(
-            expected.length === 4 && shown.length === 4 &&
-              [...expected].sort().join("|") === [...shown].sort().join("|"),
+            expected.length === 4 && shown.length === 2 && new Set(shown).size === 2 &&
+              shown.includes(expected[0]) && shown.every((c) => expected.includes(c)),
             `listening choices are the entry's own near-misses (shown [${shown.join(", ")}])`
           );
           assert(
@@ -1119,7 +1119,8 @@ async function main() {
         );
         // Alternate a right and a wrong pick: the right button is still found by
         // its text after the gloss is added, so a wrong pick must light it green.
-        const pick = n % 2 === 0 ? item.blankAnswer : item.blankWrong[0];
+        const shownNow = await page.$$eval("#quiz-choices .choice-btn", (els) => els.map((e) => e.textContent));
+        const pick = n % 2 === 0 ? item.blankAnswer : shownNow.find((c) => c !== item.blankAnswer);
         await clickChoice(page, pick);
         const rows = await page.$$eval("#quiz-choices .choice-btn", (els) =>
           els.map((b) => ({
@@ -1136,7 +1137,7 @@ async function main() {
             })(),
           }))
         );
-        assert(rows.length === 4, "four choices after answering");
+        assert(rows.length === 2, "two choices after answering");
         for (const r of rows) {
           assert(r.gloss === expectedGloss(r.choice), `"${r.choice}" shows "${expectedGloss(r.choice)}" (got "${r.gloss}")`);
           assert(r.btnRight - r.glossRight < 20, `the translation sits at the right edge of "${r.choice}"'s button`);
@@ -2384,8 +2385,9 @@ async function main() {
       });
       assert(star.prompt.includes("★"), `the ★ question marks the slot (got "${star.prompt}")`);
       assert(
-        JSON.stringify(star.choices) === JSON.stringify([...star.item.order.ordered].sort()),
-        `the ★ choices are the sentence's own four parts (got ${star.choices.join(" / ")})`
+        star.choices.length === 2 && star.choices.includes(star.answer) &&
+          star.choices.every((c) => star.item.order.ordered.includes(c)),
+        `the ★ choices are the answer plus one of the sentence's own parts (got ${star.choices.join(" / ")})`
       );
       assert(star.answer === star.item.order.ordered[star.item.order.star], "the ★ answer is the part at the star");
       await clickChoice(page, star.answer);

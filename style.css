@@ -125,20 +125,20 @@ main {
 .wrong-list { margin: 10px 0 0; padding-left: 18px; color: var(--muted); font-size: 0.9rem; line-height: 1.6; }
 .wrong-list li { margin-bottom: 6px; word-break: break-word; }
 
-.quiz-prompt { font-size: 2.6rem; font-weight: 600; margin: 16px 0 4px; white-space: pre-wrap; }
-.quiz-prompt.passage { font-size: 1rem; font-weight: 400; line-height: 1.6; text-align: left; }
-.quiz-prompt.passage.info { border: 1px solid var(--border); border-radius: 10px; padding: 12px; background: var(--card); font-size: 0.95rem; }
+.quiz-prompt { font-size: 2.767rem; font-weight: 600; margin: 16px 0 4px; white-space: pre-wrap; }
+.quiz-prompt.passage { font-size: 1.167rem; font-weight: 400; line-height: 1.6; text-align: left; }
+.quiz-prompt.passage.info { border: 1px solid var(--border); border-radius: 10px; padding: 12px; background: var(--card); font-size: 1.117rem; }
 /* 문법 sits between the two: bigger than a passage, far smaller than a lone kanji.
    2.6rem exists so kanji strokes are legible, but a 문법 sentence carries its own
    furigana as 漢字（かな）— the reading is right there, so stroke-level legibility
    isn't doing the work — and the parens roughly double the character count, which
    at 2.6rem pushed a sentence over three lines. The owner asked for "절반넘게"
    on 2026-10-07. Single-word prompts (한자/단어/가나) keep the full 2.6rem. */
-.quiz-prompt.sentence { font-size: 1.2rem; line-height: 1.7; text-align: left; }
+.quiz-prompt.sentence { font-size: 1.367rem; line-height: 1.7; text-align: left; }
 .quiz-prompt.tappable { cursor: pointer; }
-.quiz-target { font-size: 1.9rem; font-weight: 700; text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 6px; margin: 0 2px; }
+.quiz-target { font-size: 2.067rem; font-weight: 700; text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 6px; margin: 0 2px; }
 .quiz-target.blank { font-size: inherit; font-weight: 400; }
-.quiz-choices.kanji-choices .choice-btn { font-size: 1.583rem; }
+.quiz-choices.kanji-choices .choice-btn { font-size: 1.75rem; }
 /* No display rule here on purpose: the [hidden] attribute does the hiding, so
    this can't repeat the .quiz-replay bug where an author `display` beat it. */
 /* Marks which words in a 독해 passage can be tapped for a reading. Dotted rather
@@ -176,7 +176,7 @@ main {
   background: var(--card);
   color: var(--text);
   text-align: left;
-  font-size: 1.033rem;
+  font-size: 1.2rem;
   cursor: pointer;
 }
 .choice-btn.correct { background: var(--good); color: #fff; border-color: var(--good); }
@@ -186,7 +186,7 @@ main {
    keeps its own size; the gloss is a size down so it reads as a caption, and
    inherits the button colour so it stays legible on the green/red fills. */
 .choice-btn.has-gloss { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
-.choice-gloss { font-size: 0.933rem; opacity: 0.85; text-align: right; }
+.choice-gloss { font-size: 1.1rem; opacity: 0.85; text-align: right; }
 
 /* Secondary on purpose: it sits one tap away from 다음, and two identical accent
    buttons stacked on a phone is a mis-tap waiting to happen. No display rule, so
@@ -370,7 +370,7 @@ main {
 /* もんだい4 underline (the whole sentence, at sentence size) and full-sentence
    choices for 유의어/용법 (2026-11-06). */
 .quiz-under { text-decoration: underline; text-underline-offset: 5px; }
-.quiz-choices.sentence-choices .choice-btn { text-align: left; font-size: 1.083rem; line-height: 1.5; }
+.quiz-choices.sentence-choices .choice-btn { text-align: left; font-size: 1.25rem; line-height: 1.5; }
 /* 오답 통계 */
 .wrong-stats { margin-top: 12px; }
 .wrong-stats summary { cursor: pointer; font-weight: 600; }

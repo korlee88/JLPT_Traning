@@ -85,6 +85,8 @@ const MASTERED_BOX = REVIEW_INTERVALS.length - 1;
 // 외웠네"). A kana question is a single glance — one character, four readings —
 // so fifteen take about as long as five of anything else, and the chart is a
 // closed set of 104 where more sightings per sitting is the point.
+// Choices shown per 쪽지시험 question. The 모의고사 is unaffected (4, like the paper).
+const CHOICE_COUNT = 2;
 const DEFAULT_ROUND_SIZE = 5;
 //
 // 문자·어휘 went to 10 on 2026-11-06 ("문제1~5의 형태 쪽지시험 10문제씩으로"),
@@ -1544,6 +1546,12 @@ function renderQuestion() {
     answer = item.meaning;
     speak(item.script);
   }
+
+  // 쪽지시험 offers two choices (2026-11-11, "모든 문제에 선택이 2개만"). The
+  // data and the generators still produce four — the 모의고사 uses all four, as
+  // the real paper does — so this is a render-time cut: the answer plus one
+  // wrong choice drawn at random from the rest.
+  choices = shuffle([answer, ...shuffle(choices.filter((c) => c !== answer)).slice(0, CHOICE_COUNT - 1)]);
 
   quiz.answer = answer;
   const choicesEl = document.getElementById("quiz-choices");
