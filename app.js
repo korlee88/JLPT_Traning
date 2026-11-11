@@ -1686,7 +1686,11 @@ function questionTranslation(type, item) {
     case "vocab":
       return item.blankKo || null;
     case "synonym":
-      return item.meaning || null;
+      // The underlined sentence's Korean, then the right answer's own (2026-11-11,
+      // "유의어 정답의 번역도 넣어줘"): the answer is a paraphrase, so its Korean
+      // is a different sentence and `answerKo` is authored per entry.
+      if (!item.meaning) return null;
+      return item.answerKo ? `${item.meaning}\n(정답 문장) ${item.answerKo}` : item.meaning;
     case "usage":
       // 용법's prompt is a single word, so what gets translated is the one
       // sentence that uses it rightly (2026-11-08, "용법 쪽지시험에도 정답 문장
