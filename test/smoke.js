@@ -2418,6 +2418,10 @@ async function main() {
       }
       if (new Set(syn.map((e) => e.sentence)).size !== syn.length) bad.push("duplicate synonym sentence");
       if (new Set(use.map((e) => e.word)).size !== use.length) bad.push("duplicate usage word");
+      // Every 유의어 answer carries its own Korean, shown under the question after answering.
+      const badKo = syn.filter((e) => !e.answerKo || /[\u3040-\u30FF\u4E00-\u9FFF]/.test(e.answerKo)).map((e) => e.sentence.slice(0, 12));
+      assert(badKo.length === 0, `every 유의어 answerKo is present and Korean (${badKo.slice(0, 4).join("; ")})`);
+      assert(new Set(syn.map((e) => e.answerKo)).size >= syn.length - 3, "유의어 answerKo are not copy-pasted across entries");
       assert(bad.length === 0, `유의어/용법 data is well-formed (${bad.slice(0, 4).join("; ")})`);
       assert(syn.length >= 100 && use.length >= 40, `유의어 ${syn.length}, 용법 ${use.length} entries`);
     }
@@ -2465,7 +2469,9 @@ async function main() {
       const want = await page.evaluate((f) => quiz.pool[quiz.index][f], field);
       await clickChoice(page, await page.evaluate(() => quiz.answer));
       const ko = (await page.textContent("#quiz-hint-ko")).trim();
-      assert(ko === `번역: ${pre}${want}`, `${type}: the translation shows under the question after answering (got "${ko}")`);
+      const answerKo = type === "synonym" ? await page.evaluate(() => quiz.pool[quiz.index].answerKo) : null;
+      const expectedKo = type === "synonym" ? `번역: ${want}\n(정답 문장) ${answerKo}` : `번역: ${pre}${want}`;
+      assert(ko === expectedKo, `${type}: the translation shows under the question after answering (got "${ko}")`);
       const note = await page.textContent("#quiz-note");
       assert(!note.includes(want), `${type}: the note does not repeat it (got "${note}")`);
       await page.click("#quiz-next");

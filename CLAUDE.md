@@ -93,8 +93,11 @@ reading.json    [{ passage, ruby, translation, question, questionTranslation,
                   `questionTranslation` is the question in Korean, shown with it.
                   `kind?` is "long" (もんだい5 中文) or "info" (もんだい6 情報検索,
                   rendered in a box); absent means 短文
-synonym.json    [{ sentence, meaning, choices: [4 full sentences], answer, pair }]
+synonym.json    [{ sentence, meaning, choices: [4 full sentences], answer, answerKo, pair }]
                   もんだい4 유의어 quiz; `pair` is "A ≒ B (뜻)", the recap
+                  `answerKo` is the Korean of the right answer sentence, shown under the
+                  question after answering as `(정답 문장) …` (2026-11-11; the answer is a
+                  paraphrase, so `meaning` — the prompt's Korean — cannot stand in for it)
 usage.json      [{ word, meaning, choices: [4 sentences], answer, ko }]
                   もんだい5 용법 quiz; one sentence uses `word` rightly
 listening.json  [{ script, meaning, choices: [3] }]     quiz speaks `script` via Web Speech API;
